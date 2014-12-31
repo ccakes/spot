@@ -10,6 +10,7 @@ body {
     background-repeat: no-repeat;
     background-attachment: fixed;
     background-size: cover;
+    overflow: none;
 }
 
 /* Overlay image */
@@ -110,12 +111,16 @@ div.bottom div.right {
     position: relative;
     float: left;
     width: calc(33%);
+    height: 100%;
+    overflow: auto;
 }
 
 div.bottom div.center {
     position: relative;
     float: left;
     width: calc(33%);
+    height: 100%;
+    overflow: auto;
 }
 
 ul {
@@ -128,7 +133,7 @@ ul li {
     padding-bottom: 5px;
 }
 
-ul li:hover {
+li a:hover {
     text-decoration: underline;
 }
 

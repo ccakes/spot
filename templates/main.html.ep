@@ -34,7 +34,8 @@
         <div class="bottom">
             <div class="left">
                 <h2>Spot</h2>
-                <input type="text" id="searchbox" placeholder="Search" />
+                <input type="text" id="searchbox" placeholder="Search" /><br /><br />
+                <a id='playpause'><i class="fa fa-pause fa3x"></i></a>
             </div>
 
             <div class="center">
@@ -43,7 +44,7 @@
             </div>
 
             <div class="right">
-                <h4>Playlist</h4>
+                <h4>Coming Up</h4>
                 <ul id="playlist"></ul>
             </div>
         </div>
@@ -136,23 +137,28 @@
                     console.log(data);
 
                     $.get('http://' + window.location.host + '/append/' + uri, function(list, status) {
-                        if (status === 'success') {
-                            /*$('#playlist').append(
-                                $('<li>').append(
-                                    $('<a>').attr('class', 'track').attr('data-track-playlist', uri).append('+1')
-                                ).append(
-                                    $('<span>').attr('class', 'track').append(' ' + data.name + ' ')
-                                ).append(
-                                    $('<span>').attr('class', 'artist').append(data.artists[0].name)
-                                )
-                            );*/
-                            console.log('skipped in-line append');
-                        } else {
+                        if (status !== 'success') {
                             alert("Error adding track");
                             console.log("Error adding track!");
                             console.log(data);
                         }
                     });
+                });
+            });
+
+            $(document).on('click', 'a[data-track-playlist]', function(e) {
+                var a = $(e.target);
+                var uri = a.attr('data-track-playlist');
+                //var track = uri.split(':')[2];
+
+                console.log("voting for track " + uri);
+
+                $.get('http://' + window.location.host + '/vote/' + uri, function(data, status) {
+                    if (status !== 'success') {
+                        alert('Error - call Cam!');
+                        console.log("Error voting for track");
+                        console.log(data);
+                    }
                 });
             });
 

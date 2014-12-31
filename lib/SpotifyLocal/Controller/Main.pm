@@ -2,6 +2,8 @@ package SpotifyLocal::Controller::Main;
 
 use Mojo::Base 'Mojolicious::Controller';
 
+use JSON;
+
 use Data::Dumper::Simple;
 
 sub main {
@@ -37,7 +39,7 @@ sub status {
 
     my $status = $self->spot->status;
 
-    $status->{playlist} = $self->playlist;
+    $status->{playlist} = $self->redis->lrange('playlist.main', 0, 100);
 
     $self->render(json => $status);
 }
@@ -50,17 +52,50 @@ sub append {
         $self->render(json => {error => 'Missing URI'}, code => 400) and return;
     }
 
-    if (scalar @{$self->playlist} == 0) {
+    #if ($self->redis->llen('playlist.main') == 0) {
         # Get straight in to it!
-        $self->spot->play(uri => $uri);
-    }
+    #    $self->redis->set('config.playing', 1);
+    #    $self->spot->play(uri => $uri);
+    #}
 
-    push(@{$self->playlist}, $uri);
-    my $list = $self->playlist;
-
-    say Dumper($list);
+    $self->redis->rpush('playlist.main', $uri);
+    my $list = $self->redis->lrange('playlist.main', 0, 100);
 
     $self->render(json => $list);
+}
+
+sub vote_track {
+    my $self = shift;
+    my $uri = $self->param('uri');
+
+    $self->redis->zincrby('playlist.main', 1, $uri);
+    say "[DEBUG] Voted track $uri";
+
+    $self->render(json => {response => 'success'});
+}
+
+sub playpause {
+    my $self = shift;
+
+    if ($self->tx->remote_address ne '127.0.0.1') {
+        $self->render(json => {error => 'Permission denied'}, code => 401) and return;
+    }
+
+    my $status;
+    eval { $status = decode_json $self->redis->get('state') };
+    if ($@) {
+        $self->render(json => {error => 'Unable to get state from memory'}, code => 500) and return;
+    }
+
+    if ($status->{playing}) {
+        $self->redis->set('config.playing', 0);
+        $self->spot->pause;
+        $self->render(json => {'config.playing' => 0});
+    } else {
+        $self->redis->set('config.playing', 1);
+        $self->spot->play;
+        $self->render(json => {'config.playing' => 1});
+    }
 }
 
 1;

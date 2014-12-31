@@ -2,8 +2,10 @@ package SpotifyLocal;
 
 use Mojo::Base 'Mojolicious';
 
-use Test::Deep::NoTest;
 use SpotifyLocal::Local;
+
+use JSON;
+use Redis;
 
 use Data::Dumper::Simple;
 
@@ -21,8 +23,13 @@ sub startup {
     $self->attr('playlist', sub { $playlist });
     $self->helper('playlist', sub { return shift->app->playlist });
 
-    $self->attr('state', sub { $state });
-    $self->helper('state', sub { return shift->app->state });
+    $self->attr('redis', sub { Redis->new(server => 'localhost:6379') });
+    $self->helper('redis', sub { return shift->app->redis });
+
+    # preseed
+    my $status = $self->spot->status;
+    $self->redis->set('state', encode_json $status);
+    $self->redis->set('config.playing', $status->{playing});
 
     # Router
     my $r = $self->routes;
@@ -30,10 +37,13 @@ sub startup {
     $r->get('/')->to(controller => 'main', action => 'main');
     $r->get('/status')->to(controller => 'main', action => 'status');
     $r->get('/append/:uri')->to(controller => 'main', action => 'append');
+    $r->get('/vote/:uri')->to(controller => 'main', action => 'vote_track');
+    $r->get('/playpause')->to(controller => 'main', action => 'playpause');
 
     sub compare_hash {
         my $j = JSON::XS->new->canonical(1)->pretty(1);
 
+        # These fields always change - don't compare them
         delete $_[0]->{playing_position};
         delete $_[1]->{playing_position};
         delete $_[0]->{server_time};
@@ -52,19 +62,25 @@ sub startup {
 
     Mojo::IOLoop->recurring(1 => sub {
 
-        print ".";
-
         my $current = $self->spot->status;
+        my $state;
+        eval { $state = decode_json $self->redis->get('state') };
+        if ($@) {
+            say "[ERR] Unable to get stored status" and return;
+        }
+
         if (!compare_hash($current, $state)) {
             say "\n[DEBUG] State change!";
-            say Dumper($playlist);
+            #say Dumper($playlist);
 
             #if ($self->state->{playing} && ($state->{track}->{track_resource}->{uri} != $current->{track}->{track_resource}->{uri})) {
-            if ($state->{playing} && !$current->{playing}) {
+            if ($state->{playing} && !$current->{playing} && $self->redis->get('config.playing')) {
                 # New track.. do we have another to play?
+                my $playlist = $self->redis->lrange('playlist.main', 0, 100);
+
                 if (scalar @$playlist > 0) {
-                    shift @{$self->playlist};
-                    my $next_track = $playlist->[0];
+                    my $next_track = $self->redis->lpop('playlist.main');
+
                     say "[DEBUG] Playing $next_track";
                     $self->spot->play(uri => $next_track);
                 } else {
@@ -72,8 +88,7 @@ sub startup {
                 }
             }
 
-            $state = $current;
-
+            $self->redis->set('state', encode_json $current);
         }
     });
 }
