@@ -154,9 +154,8 @@
             });
 
             $(document).on('click', 'a[data-track-playlist]', function(e) {
-                var a = $(e.target);
+                var a = $(e.target.parentNode);
                 var uri = a.attr('data-track-playlist');
-                //var track = uri.split(':')[2];
 
                 console.log("voting for track " + uri);
 
@@ -171,6 +170,8 @@
 
             $('#searchbox').donetyping(function() {
                 var query = $('#searchbox').val();
+
+                if (!query) { return; }
                 console.log("Searching for: " + query);
 
                 $('#results').empty();
