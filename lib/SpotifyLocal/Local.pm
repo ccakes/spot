@@ -127,36 +127,6 @@ sub status {
     return decode_json(shift->_request('/remote/status.json', returnafter => 1)->content);
 }
 
-sub on_track_change {
-    my $self = shift;
-    my $action = shift || sub {};
-
-    return unless ref $action eq 'CODE';
-
-    my $current = $self->status;
-    my $status;
-
-    if (!$current->{playing}) {
-        warn "[DEBUG] Not playing, lets wait for the next track\n";
-        $status = $current;
-        while (!$status->{playing}) {
-            print ".";
-            $status = decode_json($self->_request('/remote/status.json', returnafter => 30)->content);
-        }
-    }
-    else {
-        warn "[DEBUG] We're playing, lets wait for the next track\n";
-        $status = $current;
-        while ($status->{track}->{track_resource}->{uri} eq $current->{track}->{track_resource}->{uri}) {
-            print ".";
-            $status = decode_json($self->_request('/remote/status.json', returnafter => 30)->content);
-        }
-    }
-
-    warn "\n[DEBUG] Out of the loop, looks like we're ready to go!\n";
-    $action->($status);
-}
-
 =head2 _request
 
 Build HTTP request

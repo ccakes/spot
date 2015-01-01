@@ -22,8 +22,6 @@ sub startup {
     $self->attr('redis', sub { Redis->new(server => 'localhost:6379') });
     $self->helper('redis', sub { return shift->app->redis });
 
-    $self->redis->set('config.incr', 0);
-
     # preseed
     my $status = $self->spot->status;
     $self->redis->set('state', encode_json $status);
