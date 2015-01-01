@@ -2,22 +2,30 @@ package SpotifyLocal;
 
 use Mojo::Base 'Mojolicious';
 
-use SpotifyLocal::Local;
+use Spotify::Control;
+use Spotify::Control::HTTP;
 
 use JSON;
 use Redis;
+use LWP::UserAgent;
 
 use Data::Dumper::Simple;
-
-my $order = 0;
 
 # This method will run once at server start
 sub startup {
     my $self = shift;
 
-    $self->attr('spotify', sub { SpotifyLocal::Local->new });
+    $self->plugin('Config', file => sprintf('%s/../spotify.conf', $FindBin::Bin));
+
+    # method => invalid is so I can set up the UA. This is to work around an SSL issue on my local machine
+    $self->attr('spotify', sub { Spotify::Control->new(method => 'invalid') });
     $self->helper('spot', sub { return shift->app->spotify });
-    $self->spot->initialise;
+
+    my $ua = LWP::UserAgent->new(ssl_opts => {verify_hostname => 0});
+    my $spot_http = Spotify::Control::HTTP->new;
+    $spot_http->ua($ua);
+    $self->spot->spot($spot_http);
+    $self->spot->spot->initialise;
 
     $self->attr('redis', sub { Redis->new(server => 'localhost:6379') });
     $self->helper('redis', sub { return shift->app->redis });
@@ -63,33 +71,31 @@ sub startup {
         my $state;
         eval { $state = decode_json $self->redis->get('state') };
         if ($@) {
-            say "[ERR] Unable to get stored status" and return;
+            $self->app->log->error("Unable to get stored status") and return;
         }
 
         if (!compare_hash($current, $state)) {
-            say "[DEBUG] State change!";
+            $self->app->log->info("State change!");
             #say Dumper($playlist);
 
             #if ($self->state->{playing} && ($state->{track}->{track_resource}->{uri} != $current->{track}->{track_resource}->{uri})) {
             if ($state->{playing} && !$current->{playing} && $self->redis->get('config.playing')) {
                 # New track.. do we have another to play?
                 my $playlist = $self->redis->zrange('playlist.main', 0, 100);
-                say Dumper($playlist);
 
                 if (scalar @$playlist > 0) {
                     my $next_track = $self->redis->zrange('playlist.main', 0, 1)->[0];
-                    say "[DEBUG] Next track: $next_track";
 
                     # Clean up
                     $self->redis->zrem('playlist.main', $next_track);
                     $next_track = (split /\|/, $next_track)[1];
                     $self->redis->hdel('playlist.main.lookup', $next_track);
 
-                    say "[DEBUG] Playing $next_track";
+                    $self->app->log->info("$$: IOLoop - playing $next_track");
                     $self->spot->play(uri => $next_track);
                     $self->redis->set('current_track', $next_track);
                 } else {
-                    say "[DEBUG] Nothing else to play :(";
+                    $self->app->log->info("Nothing else to play :(");
                 }
             }
 

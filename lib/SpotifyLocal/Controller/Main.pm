@@ -63,7 +63,7 @@ sub vote_track {
     }
 
     $self->redis->zincrby('playlist.main', -1, $key . '|' . $uri);
-    say "[DEBUG] Voted track $uri";
+    $self->app->log->info("Voted track $uri");
 
     $self->render(json => {response => 'success'});
 }
@@ -82,12 +82,12 @@ sub playpause {
     }
 
     if ($status->{playing}) {
-        say "[DEBUG] Pausing player";
+        $self->app->log->info("Pausing player");
         $self->redis->set('config.playing', 0);
         $self->spot->pause;
         $self->render(json => {'config.playing' => 0});
     } else {
-        say "[DEBUG] Starting player";
+        $self->app->log->info("Starting player");
 
         if ($status->{track}->{track_resource}->{uri}) {
             $self->redis->set('config.playing', 1);
@@ -100,7 +100,7 @@ sub playpause {
             $next_track = (split /\|/, $next_track)[1];
             $self->redis->hdel('playlist.main.lookup', $next_track);
 
-            say "[DEBUG] Playing $next_track";
+            $self->app->log->info("Main::playpause() - playing $next_track");
             $self->redis->set('config.playing', 1);
             $self->spot->play(uri => $next_track);
             $self->redis->set('current_track', $next_track);
@@ -134,7 +134,7 @@ sub start {
     $next_track = (split /\|/, $next_track)[1];
     $self->redis->hdel('playlist.main.lookup', $next_track);
 
-    say "[DEBUG] Playing $next_track";
+    $self->app->log->info("Main::start() - playing $next_track");
     $self->redis->set('config.playing', 1);
     $self->spot->play(uri => $next_track);
     $self->redis->set('current_track', $next_track);
