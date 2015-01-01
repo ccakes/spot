@@ -9,8 +9,7 @@ use Redis;
 
 use Data::Dumper::Simple;
 
-my $playlist = [];
-my $state = {};
+my $order = 0;
 
 # This method will run once at server start
 sub startup {
@@ -20,11 +19,10 @@ sub startup {
     $self->helper('spot', sub { return shift->app->spotify });
     $self->spot->initialise;
 
-    $self->attr('playlist', sub { $playlist });
-    $self->helper('playlist', sub { return shift->app->playlist });
-
     $self->attr('redis', sub { Redis->new(server => 'localhost:6379') });
     $self->helper('redis', sub { return shift->app->redis });
+
+    $self->redis->set('config.incr', 0);
 
     # preseed
     my $status = $self->spot->status;
@@ -39,6 +37,7 @@ sub startup {
     $r->get('/append/:uri')->to(controller => 'main', action => 'append');
     $r->get('/vote/:uri')->to(controller => 'main', action => 'vote_track');
     $r->get('/playpause')->to(controller => 'main', action => 'playpause');
+    $r->get('/start')->to(controller => 'main', action => 'start');
 
     sub compare_hash {
         my $j = JSON::XS->new->canonical(1)->pretty(1);
@@ -70,19 +69,27 @@ sub startup {
         }
 
         if (!compare_hash($current, $state)) {
-            say "\n[DEBUG] State change!";
+            say "[DEBUG] State change!";
             #say Dumper($playlist);
 
             #if ($self->state->{playing} && ($state->{track}->{track_resource}->{uri} != $current->{track}->{track_resource}->{uri})) {
             if ($state->{playing} && !$current->{playing} && $self->redis->get('config.playing')) {
                 # New track.. do we have another to play?
-                my $playlist = $self->redis->lrange('playlist.main', 0, 100);
+                my $playlist = $self->redis->zrange('playlist.main', 0, 100);
+                say Dumper($playlist);
 
                 if (scalar @$playlist > 0) {
-                    my $next_track = $self->redis->lpop('playlist.main');
+                    my $next_track = $self->redis->zrange('playlist.main', 0, 1)->[0];
+                    say "[DEBUG] Next track: $next_track";
+
+                    # Clean up
+                    $self->redis->zrem('playlist.main', $next_track);
+                    $next_track = (split /\|/, $next_track)[1];
+                    $self->redis->hdel('playlist.main.lookup', $next_track);
 
                     say "[DEBUG] Playing $next_track";
                     $self->spot->play(uri => $next_track);
+                    $self->redis->set('current_track', $next_track);
                 } else {
                     say "[DEBUG] Nothing else to play :(";
                 }

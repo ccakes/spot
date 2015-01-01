@@ -35,7 +35,8 @@
             <div class="left">
                 <h2>Spot</h2>
                 <input type="text" id="searchbox" placeholder="Search" /><br /><br />
-                <a id='playpause'><i class="fa fa-pause fa3x"></i></a>
+                <a id='spotify'><i class="fa fa-spotify fa-3x"></i></a>
+                <a id='playpause'><i class="fa fa-pause fa-3x"></i></a>
             </div>
 
             <div class="center">
@@ -187,6 +188,18 @@
                 });
             });
 
+            $('#playpause').on('click', function(e) {
+                $.get('http://' + window.location.host + '/playpause', function(data) {
+                    console.log(data);
+                });
+            });
+
+            $('#spotify').on('click', function(e) {
+                $.get('http://' + window.location.host + '/start', function(data) {
+                    console.log(data);
+                });
+            });
+
             window.setInterval(function() {
                 $.get('http://' + window.location.host + '/status', function(data, status) {
                     if (status !== 'success') {
@@ -197,13 +210,12 @@
                     $('#track').text(data.track.track_resource.name);
                     $('#album').text(data.track.album_resource.name);
 
+                    document.title = data.track.artist_resource.name + ' - ' + data.track.track_resource.name;
+
                     if (artist !== data.track.artist_resource.uri) {
                         var artist_id = data.track.artist_resource.uri.split(':')[2];
                         $.get('https://api.spotify.com/v1/artists/' + artist_id, function(res, status) {
                             if (status === 'success') {
-                                console.log("WALLPAPER HERE");
-                                console.log(res);
-
                                 $('body').css('background-image', "url('" + res.images[0].url + "')");
                             }
                         });
