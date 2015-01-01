@@ -116,6 +116,7 @@
             var spotify = new SpotifyWebApi();
             var artist; // use this to track artist changes (and update background)
             var playlist = Array();
+            var country = 'AU'; // hard-coded, need to figure out a better way to handle this dynamically
 
             $(document).on('click', 'a[data-track-results]', function(e) {
                 var a = $(e.target.parentNode);
@@ -164,6 +165,10 @@
                     console.log(data);
 
                     $.each(data.tracks.items, function(key, value) {
+                        if (value.available_markets.indexOf(country) == -1) {
+                            return; // skip this track
+                        }
+
                         $('#results').append(
                             //$('<li>').append(value.artists[0].name + ' - ' + value.name)
                             $('<li>').append(
