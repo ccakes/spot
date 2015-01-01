@@ -44,6 +44,9 @@ sub startup {
     $r->get('/vote/:uri')->to(controller => 'main', action => 'vote_track');
     $r->get('/playpause')->to(controller => 'main', action => 'playpause');
     $r->get('/start')->to(controller => 'main', action => 'start');
+    $r->get('/export')->to(controller => 'main', action => 'export');
+
+    $r->post('/import')->to(controller => 'main', action => 'import');
 
     sub compare_hash {
         my $j = JSON::XS->new->canonical(1)->pretty(1);

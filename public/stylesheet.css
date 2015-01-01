@@ -68,6 +68,14 @@ div.bottom div.center {
     overflow: auto;
 }
 
+span.save {
+    font-size: x-small;
+}
+
+span.save i {
+    margin-left: .5em;
+}
+
 ul {
     font-size: medium;
     font-weight: normal;

@@ -20,7 +20,7 @@
                 <input type="text" id="searchbox" placeholder="Search" /><br /><br />
                 <% if ($remote eq '127.0.0.1') { %>
                 <p>
-                    <a class="mgmt" id='spotify'><i class="fa fa-spotify fa-1x"></i> Start</a>
+                    <a class="mgmt" id='spotify'><i class="fa fa-spotify fa-1x"></i> Start Jukebox</a>
                 </p>
                 <p>
                     <a class="mgmt" id='playpause'><i class="fa fa-pause fa-1x"></i> Play/Pause</a>
@@ -34,7 +34,13 @@
             </div>
 
             <div class="right">
-                <h4>Coming Up</h4>
+                <h4>
+                    Coming Up
+                    <span class="save">
+                        <a id="export"><i class="fa fa-file-code-o fa-1x"></i></a>
+                        <a id="import"><i class="fa fa-folder-open fa-1x"></i></a>
+                    </span>
+                </h4>
                 <ul id="playlist"></ul>
             </div>
         </div>
@@ -192,6 +198,25 @@
             $('#spotify').on('click', function(e) {
                 $.get('http://' + window.location.host + '/start', function(data) {
                     console.log(data);
+                });
+            });
+
+            $('#export').on('click', function(e) {
+                $.get('http://' + window.location.host + '/export', function(data) {
+                    window.prompt('Copy this:', JSON.stringify(data));
+                });
+            });
+
+            $('#import').on('click', function(e) {
+                var playlist = window.prompt('Paste here:');
+                $.ajax({
+                    type: 'POST',
+                    url: 'http://' + window.location.host + '/import',
+                    contentType: 'application/json',
+                    data: JSON.stringify(playlist),
+                    success: function(res) {
+                        alert('Import successful');
+                    }
                 });
             });
 

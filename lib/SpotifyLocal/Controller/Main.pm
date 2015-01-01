@@ -68,6 +68,43 @@ sub vote_track {
     $self->render(json => {response => 'success'});
 }
 
+sub import {
+    my $self = shift;
+    my $json = $self->tx->req->body;
+
+    my $playlist;
+    eval { $playlist = decode_json $json };
+    if ($@ || ref $playlist ne 'ARRAY') {
+        $self->render(json => {error => 'Invalid data'}) and return;
+    }
+
+    # kill existing list
+    $self->redis->del('playlist.main');
+    $self->redis->del('playlist.main.lookup');
+
+    my $count = 0;
+    foreach my $line (@$playlist) {
+        if ($line =~ /^\d+\|spotify.*$/) {
+            my ($int, $track) = split /\|/, $line;
+
+            $count = $int if $int > $count; # seed Redis with count so new tracks are added to the end
+
+            $self->redis->zadd('playlist.main', 10, $line);
+            $self->redis->hset('playlist.main.lookup', $track, $int);
+        }
+    }
+    $self->redis->set('config.incr', $count);
+
+    $self->render(json => $playlist);
+}
+
+sub export {
+    my $self = shift;
+
+    my $playlist = $self->redis->zrange('playlist.main', 0, 100);
+    $self->render(json => $playlist);
+}
+
 sub playpause {
     my $self = shift;
 
