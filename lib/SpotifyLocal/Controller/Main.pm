@@ -10,28 +10,7 @@ use Data::Dumper::Simple;
 sub main {
     my $self = shift;
 
-    my $status = $self->spot->status;
-    my $title = 'Not Playing';
-    my $artist = 'Not Playing';
-    my ($track, $album, $artist_id);
-    my $background = '/default.jpg';
-
-    if ($status->{track}) {
-        $title = sprintf '%s - %s', $status->{track}->{artist_resource}->{name}, $status->{track}->{track_resource}->{name};
-
-        $artist = $status->{track}->{artist_resource}->{name};
-        $track = $status->{track}->{track_resource}->{name};
-        $album = $status->{track}->{album_resource}->{name};
-
-        $artist_id = (split /\:/, $status->{track}->{artist_resource}->{uri})[2];
-
-        my $ua = Mojo::UserAgent->new;
-        my $res = $ua->get('https://api.spotify.com/v1/artists/' . $artist_id, {'Accept' => 'application/json'})->res;
-
-        $background = $res->json->{images}->[0]->{url};
-    }
-
-    $self->render('main', title => $title, artist => $artist, album => $album, track => $track, background => $background, artist_id => $artist_id);
+    $self->render('main', remote => $self->tx->remote_address);
 
 }
 
@@ -58,11 +37,12 @@ sub append {
         $self->render(json => {error => 'Missing URI'}, code => 400) and return;
     }
 
-    #if ($self->redis->llen('playlist.main') == 0) {
-        # Get straight in to it!
-    #    $self->redis->set('config.playing', 1);
-    #    $self->spot->play(uri => $uri);
-    #}
+    # Check for duplicates
+    # Cheat a bit here - assume that if it exists in the lookup table
+    # then it exists in the playlist.
+    if ($self->redis->hexists('playlist.main.lookup', $uri)) {
+        $self->render(json => {error => 'Track exists in playlist'}, code => 400) and return;
+    }
 
     # Key the ZSET for lexical ordering on query
     # Then store the key in a lookup table so we can use it later

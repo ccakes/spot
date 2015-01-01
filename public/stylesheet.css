@@ -1,7 +1,3 @@
-html {
-    overflow: none;
-}
-
 body {
     color: #eee;
     font-family: "Helvetica Neue", Helvetica, Arial, "Lucida Grande", sans-serif;
@@ -14,7 +10,7 @@ body {
     background-repeat: no-repeat;
     background-attachment: fixed;
     background-size: cover;
-    overflow: none;
+    overflow: hidden;
 }
 
 /* Overlay image */
@@ -161,8 +157,24 @@ span.artist {
     font-size: 12px;
 }
 
+#playlist li a i {
+    opacity: .2;
+}
+
+#playlist li:hover a i {
+    opacity: 1;
+}
+
 a:hover {
     cursor: pointer;
+}
+
+a.mgmt {
+    font-size: xx-large;
+}
+
+a.mgmt i {
+    padding-right: 10px;
 }
 
 input#search {

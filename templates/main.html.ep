@@ -1,17 +1,17 @@
 <!DOCTYPE html>
 <html>
     <head>
-        <title><%= $title %></title>
+        <title>Spot</title>
         <link rel="stylesheet" href="/stylesheet.css" type="text/css" />
         <link href="//maxcdn.bootstrapcdn.com/font-awesome/4.2.0/css/font-awesome.min.css" rel="stylesheet">
         <script type="text/javascript" src="/spotify-web-api.js"></script>
         <script type="text/javascript" src="//cdnjs.cloudflare.com/ajax/libs/jquery/2.1.3/jquery.min.js"></script>
     </head>
 
-    <body style="zoom: 1; background-image: url(<%= $background %>);">
-        <h1 id="artist"><%= $artist %></h1>
-        <h2 id="track"><%= $track %></h2>
-        <h3 id="album"><%= $album %></h3>
+    <body style="zoom: 1; background-image: url(/default.jpg);">
+        <h1 id="artist"></h1>
+        <h2 id="track"></h2>
+        <h3 id="album"></h3>
 
         <!--
         <div class="panel">
@@ -35,8 +35,14 @@
             <div class="left">
                 <h2>Spot</h2>
                 <input type="text" id="searchbox" placeholder="Search" /><br /><br />
-                <a id='spotify'><i class="fa fa-spotify fa-3x"></i></a>
-                <a id='playpause'><i class="fa fa-pause fa-3x"></i></a>
+                <% if ($remote eq '127.0.0.1') { %>
+                <p>
+                    <a class="mgmt" id='spotify'><i class="fa fa-spotify fa-1x"></i> Start</a>
+                </p>
+                <p>
+                    <a class="mgmt" id='playpause'><i class="fa fa-pause fa-1x"></i> Play/Pause</a>
+                </p>
+                <% } %>
             </div>
 
             <div class="center">
@@ -125,7 +131,7 @@
             })(jQuery);
 
             var spotify = new SpotifyWebApi();
-            var artist = '<%= $artist_id %>'; // use this to track artist changes (and update background)
+            var artist; // use this to track artist changes (and update background)
             var playlist = Array();
 
             $(document).on('click', 'a[data-track-results]', function(e) {
@@ -231,7 +237,9 @@
                             $.each(data.tracks, function(key, val) {
                                 $('#playlist').append(
                                     $('<li>').append(
-                                        $('<a>').attr('class', 'track').attr('data-track-playlist', val.uri).append('+1')
+                                        $('<a>').attr('class', 'track').attr('data-track-playlist', val.uri).append(
+                                            $('<i>').attr('class', 'fa fa-thumbs-up fa-1x')
+                                        )
                                     ).append(
                                         $('<span>').attr('class', 'track').append(' ' + val.name + ' ')
                                     ).append(
