@@ -247,21 +247,30 @@
 
                     if (!playlist.equals(data.playlist)) {
                         $('#playlist').empty();
-                        spotify.getTracks(data.playlist, function(err, data) {
-                            $.each(data.tracks, function(key, val) {
-                                $('#playlist').append(
-                                    $('<li>').append(
-                                        $('<a>').attr('class', 'track').attr('data-track-playlist', val.uri).append(
-                                            $('<i>').attr('class', 'fa fa-thumbs-up fa-1x')
+
+                        // awful hack to copy the playlist into a temp for cutting up
+                        // https://github.com/ccakes/spot/issues/6
+                        var temp_playlist = jQuery.extend([], data.playlist);
+
+                        while (temp_playlist.length) {
+                            var partial = temp_playlist.splice(0, 50);
+
+                            spotify.getTracks(partial, function(err, data) {
+                                $.each(data.tracks, function(key, val) {
+                                    $('#playlist').append(
+                                        $('<li>').append(
+                                            $('<a>').attr('class', 'track').attr('data-track-playlist', val.uri).append(
+                                                $('<i>').attr('class', 'fa fa-thumbs-up fa-1x')
+                                            )
+                                        ).append(
+                                            $('<span>').attr('class', 'track').append(' ' + val.name + ' ')
+                                        ).append(
+                                            $('<span>').attr('class', 'artist').append(val.artists[0].name)
                                         )
-                                    ).append(
-                                        $('<span>').attr('class', 'track').append(' ' + val.name + ' ')
-                                    ).append(
-                                        $('<span>').attr('class', 'artist').append(val.artists[0].name)
-                                    )
-                                );
+                                    );
+                                });
                             });
-                        });
+                        }
 
                         playlist = data.playlist;
                     }
