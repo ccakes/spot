@@ -84,10 +84,15 @@ sub startup {
             #if ($self->state->{playing} && ($state->{track}->{track_resource}->{uri} != $current->{track}->{track_resource}->{uri})) {
             if ($state->{playing} && !$current->{playing} && $self->redis->get('config.playing')) {
                 # New track.. do we have another to play?
-                my $playlist = $self->redis->zrange('playlist.main', 0, 100);
+                my $zset = $self->redis->zrange('playlist.main', 0, 100);
 
-                if (scalar @$playlist > 0) {
-                    my $next_track = $self->redis->zrange('playlist.main', 0, 1)->[0];
+                # Strip ordering key and sort (hack because Redis sorts as strings)
+                my (%unsorted, @playlist);
+                map { my ($k, $v) = split /\|/, $_; $unsorted{$k} = $v; } @$zset;
+                foreach (sort { $a <=> $b } keys %unsorted) { push @playlist, "$_|$unsorted{$_}" }
+
+                if (scalar @playlist > 0) {
+                    my $next_track = $playlist[0];
 
                     # Clean up
                     $self->redis->zrem('playlist.main', $next_track);

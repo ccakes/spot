@@ -18,15 +18,8 @@ sub status {
     my $self = shift;
 
     my $status = $self->spot->status;
-    my $zset = $self->redis->zrange('playlist.main', 0, 100);
-    #say Dumper($status);
 
-    # Strip ordering key and sort (hack because Redis sorts as strings)
-    my (%unsorted, @playlist);
-    map { my ($k, $v) = split /\|/, $_; $unsorted{$k} = $v; } @$zset;
-    foreach (sort { $a <=> $b } keys %unsorted) { push @playlist, $unsorted{$_} }
-
-    $status->{playlist} = \@playlist;
+    $status->{playlist} = $self->_get_playlist;
 
     $self->render(json => $status);
 }
@@ -103,7 +96,7 @@ sub import {
 sub export {
     my $self = shift;
 
-    my $playlist = $self->redis->zrange('playlist.main', 0, 100);
+    my $playlist = $self->_get_playlist;
     $self->render(json => $playlist);
 }
 
@@ -132,7 +125,7 @@ sub playpause {
             $self->redis->set('config.playing', 1);
             $self->spot->unpause;
         } else {
-            my $next_track = $self->redis->zrange('playlist.main', 0, 1)->[0];
+            my $next_track = $self->_get_playlist()->[0];
 
             # Clean up
             $self->redis->zrem('playlist.main', $next_track);
@@ -166,7 +159,7 @@ sub start {
         $self->spot->pause;
     }
 
-    my $next_track = $self->redis->zrange('playlist.main', 0, 1)->[0];
+    my $next_track = $self->_get_playlist()->[0];
 
     # Clean up
     $self->redis->zrem('playlist.main', $next_track);
@@ -179,6 +172,19 @@ sub start {
     $self->redis->set('current_track', $next_track);
 
     $self->render(json => {current_track => $next_track});
+}
+
+sub _get_playlist {
+    my $self = shift;
+
+    my $zset = $self->redis->zrange('playlist.main', 0, 100);
+
+    # Strip ordering key and sort (hack because Redis sorts as strings)
+    my (%unsorted, @playlist);
+    map { my ($k, $v) = split /\|/, $_; $unsorted{$k} = $v; } @$zset;
+    foreach (sort { $a <=> $b } keys %unsorted) { push @playlist, "$_|$unsorted{$_}" }
+
+    return \@playlist;
 }
 
 1;
