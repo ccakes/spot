@@ -21,8 +21,10 @@ sub status {
     my $zset = $self->redis->zrange('playlist.main', 0, 100);
     #say Dumper($status);
 
-    # Strip ordering key
-    my @playlist = map { (split /\|/, $_)[1] } @$zset;
+    # Strip ordering key and sort (hack because Redis sorts as strings)
+    my (%unsorted, @playlist);
+    map { my ($k, $v) = split /\|/, $_; $unsorted{$k} = $v; } @$zset;
+    foreach (sort { $a <=> $b } keys %unsorted) { push @playlist, $unsorted{$_} }
 
     $status->{playlist} = \@playlist;
 
