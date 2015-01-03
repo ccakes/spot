@@ -20,6 +20,7 @@ sub status {
     my $status = $self->spot->status;
 
     $status->{playlist} = $self->_get_playlist;
+    $status->{playlist_len} = scalar @{$status->{playlist}};
 
     $self->render(json => $status);
 }

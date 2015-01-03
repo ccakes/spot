@@ -246,33 +246,40 @@
                     data.playlist = $.map(data.playlist, function(n, i) { return n.split(':')[2] });
 
                     if (!playlist.equals(data.playlist)) {
+                        console.log("[" + new Date().toISOString() + "] playlist diff - rebuilding");
+                        playlist = jQuery.extend([], data.playlist);
                         $('#playlist').empty();
 
-                        // awful hack to copy the playlist into a temp for cutting up
-                        // https://github.com/ccakes/spot/issues/6
-                        var temp_playlist = jQuery.extend([], data.playlist);
+                        var chunks = Array();
+                        while (data.playlist.length) { chunks.push(data.playlist.splice(0, 50)) }
 
-                        while (temp_playlist.length) {
-                            var partial = temp_playlist.splice(0, 50);
+                        // using queues to run through list sequentialls
+                        $.each(chunks, function(i, chunk) {
+                            $('body').queue(function() {
+                                //console.log("[" + new Date().toISOString() + "] playlist chunk #" + i);
+                                spotify.getTracks(chunk, function(err, data) {
+                                    if (err) { $('body').clearQueue(); alert('error'); }
 
-                            spotify.getTracks(partial, function(err, data) {
-                                $.each(data.tracks, function(key, val) {
-                                    $('#playlist').append(
-                                        $('<li>').append(
-                                            $('<a>').attr('class', 'track').attr('data-track-playlist', val.uri).append(
-                                                $('<i>').attr('class', 'fa fa-thumbs-up fa-1x')
+                                    $.each(data.tracks, function(key, val) {
+                                        $('#playlist').append(
+                                            $('<li>').append(
+                                                $('<a>').attr('class', 'track').attr('data-track-playlist', val.uri).append(
+                                                    $('<i>').attr('class', 'fa fa-thumbs-up fa-1x')
+                                                )
+                                            ).append(
+                                                $('<span>').attr('class', 'track').append(' ' + val.name + ' ')
+                                            ).append(
+                                                $('<span>').attr('class', 'artist').append(val.artists[0].name)
                                             )
-                                        ).append(
-                                            $('<span>').attr('class', 'track').append(' ' + val.name + ' ')
-                                        ).append(
-                                            $('<span>').attr('class', 'artist').append(val.artists[0].name)
-                                        )
-                                    );
+                                        );
+                                    });
+
+                                    $('body').dequeue();
                                 });
                             });
-                        }
+                        });
 
-                        playlist = data.playlist;
+                        //$('#playlist').html(new_list);
                     }
 
                     //console.log(data);
