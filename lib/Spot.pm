@@ -66,6 +66,8 @@ has ev => sub {
 
             $self->app->redis->set('cache.state', encode_json $current);
 
+            if ($)
+
             # TODO
             # Expand this to emit specific events for play, pause, track_change, volume etc
             # Then allow plugins/extensions to register interest in events
@@ -89,6 +91,15 @@ sub startup {
                 my $c = shift;
                 my $access_token = shift;
                 my $account_info = shift;
+
+                # Remember the user for blaming and future trending data
+                if (!$self->app->redis->hexists('user.data', $account_info->{id})) {
+                    $self->app->redis->hset('user.data', encode_json {
+                        display_name => $account_info->{displayName},
+                        gender => $account_info->{gender},
+                        image => $account_info->{image}
+                    });
+                }
 
                 $c->session('access_token' => $access_token);
                 $c->session('account_info' => $account_info);
@@ -121,9 +132,15 @@ sub startup {
     $r->get('/account' => sub {
         my $self = shift;
 
-        my $j = JSON::XS->new->allow_blessed(1);
-        my $obj = $j->decode($j->encode($self));
-        $self->render(json => $obj);
+        my $session = $self->session;
+        $self->render(json => $session);
+    });
+
+    $r->get('/logout' => sub {
+        my $self = shift;
+
+        $self->session(expires => 1);
+        $self->render(text => 'Logged out');
     });
 }
 
@@ -145,7 +162,7 @@ sub _play_next {
     # Clean up
     $self->app->redis->zrem('playlist.main', $next);
 
-    return 1;
+    return $next;
 }
 
 # Add track to playlist

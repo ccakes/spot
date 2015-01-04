@@ -76,6 +76,8 @@ sub sock {
     my $loop = Mojo::IOLoop->singleton;
     $loop->stream($self->tx->connection)->timeout(1000);
 
+    # Manage "current listeners" via websocket connections
+
     # drop inbound messages
     $self->on(message => sub {});
 
