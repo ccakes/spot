@@ -1,3 +1,5 @@
 log/*.log
-script/hypnotoad.pid
+script/*.pid
 .DS_Store
+
+spot.conf
