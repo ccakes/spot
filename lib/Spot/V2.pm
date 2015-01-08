@@ -104,14 +104,16 @@ sub sock {
     #$loop->stream($self->tx->connection)->timeout(60);
     $self->inactivity_timeout(300);
 
-    if (exists $self->app->config->{auth} && grep /^sock$/, @{$self->app->config->{auth}->{actions}}) {
+    if (exists $self->app->config->{auth} && $self->session('account_info')) {
+        my $account = $self->session('account_info');
+
         # Manage "current listeners" via websocket connections
-        $self->app->redis->rpush('cache.users', $self->session('account_info')->{id});
-        $self->app->state->user($self->session('account_info')->{id}, 1);
+        $self->app->redis->rpush('cache.users', $account->{id});
+        $self->app->state->user($account->{id}, 1);
 
         $self->on(finish => sub {
-            $self->app->redis->lrem('cache.users', 0, $self->session('account_info')->{id});
-            $self->app->state->user($self->session('account_info')->{id});
+            $self->app->redis->lrem('cache.users', 0, $account->{id});
+            $self->app->state->user($account->{id});
         });
     }
 
@@ -179,7 +181,7 @@ sub append {
         }
 
         my $track = decode_json $tx->res->body;
-        $self->app->redis->hset('cache.tracks', $uri, encode_json {
+        my $cache = {
             artist => $track->{artists}->[0]->{name},
             track => $track->{name},
             album => {
@@ -187,7 +189,13 @@ sub append {
                 uri => $track->{album}->{uri},
                 cover => $track->{album}->{images}->[0]->{url} || ''
             }
-        });
+        };
+
+        if (exists $self->app->config->{auth} && $self->session('account_info')) {
+            $cache->{user} = {id => $self->session('account_info')->{id}, display => $self->session('account_info')->{displayName}};
+        }
+
+        $self->app->redis->hset('cache.tracks', $uri, encode_json $cache);
 
         $self->app->_queue_track($uri);
 

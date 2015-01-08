@@ -97,10 +97,10 @@ sub startup {
 
                 # Remember the user for blaming and future trending data
                 if (!$self->app->redis->hexists('user.data', $account_info->{id})) {
-                    $self->app->redis->hset('user.data', encode_json {
+                    $self->app->redis->hset('user.data', $account_info->{id}, encode_json {
                         display_name => $account_info->{displayName},
                         gender => $account_info->{gender},
-                        image => $account_info->{image}
+                        image => $account_info->{image}->{url} || ''
                     });
                 }
 
