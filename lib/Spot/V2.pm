@@ -13,6 +13,8 @@ sub auth {
     # Grab the final action from the stack
     my $action = $self->match->{stack}->[-1]->{action};
 
+    $self->tx->res->headers->header('Access-Control-Allow-Origin' => '*');
+
     if (exists $self->app->config->{auth} && grep /^$action$/, @{$self->app->config->{auth}->{actions}}) {
         if (!$self->session('account_info')) {
             return $self->redirect_to( sprintf('/auth/%s/authenticate', lc $self->app->config->{auth}->{module}) );
@@ -32,8 +34,6 @@ sub state {
         $self->render(json => {error => 'Unable to get state from Redis'}, code => 500) and return;
     }
 
-    my $playlist = $self->app->redis->zrange('playlist.main', 0, 100);
-
     my $response = {
         client_version => $state->{client_version},
         playing => $state->{playing},
@@ -50,11 +50,38 @@ sub state {
                 name => $state->{track}->{album_resource}->{name},
                 uri => $state->{track}->{album_resource}->{uri}
             }
-        },
-        playlist => $playlist
+        }
     };
 
     $self->render(json => $response);
+}
+
+sub playlist {
+    my $self = shift;
+
+    my $playlist = [];
+    my $zset = $self->app->redis->zrange('playlist.main', 0, 100);
+
+    foreach (@$zset) {
+        my $track_data = $self->app->redis->hget('cache.tracks', $_);
+
+        if (!$track_data) {
+            $self->app->log->error("Unable to lookup track data for $_");
+            next;
+        }
+
+        my $track;
+        eval { $track = decode_json $track_data };
+        if ($@) {
+            $self->app->log->error("Corrupted data in Redis for track $_");
+            next;
+        }
+        $track->{uri} = $_;
+
+        push @$playlist, $track;
+    }
+
+    $self->render(json => $playlist);
 }
 
 sub status {
@@ -73,16 +100,46 @@ sub status {
 sub sock {
     my $self = shift;
 
-    my $loop = Mojo::IOLoop->singleton;
-    $loop->stream($self->tx->connection)->timeout(1000);
+    #my $loop = Mojo::IOLoop->singleton;
+    #$loop->stream($self->tx->connection)->timeout(60);
+    $self->inactivity_timeout(300);
 
-    # Manage "current listeners" via websocket connections
+    if (exists $self->app->config->{auth} && grep /^sock$/, @{$self->app->config->{auth}->{actions}}) {
+        # Manage "current listeners" via websocket connections
+        $self->app->redis->rpush('cache.users', $self->session('account_info')->{id});
+        $self->app->state->user($self->session('account_info')->{id}, 1);
+
+        $self->on(finish => sub {
+            $self->app->redis->lrem('cache.users', 0, $self->session('account_info')->{id});
+            $self->app->state->user($self->session('account_info')->{id});
+        });
+    }
 
     # drop inbound messages
-    $self->on(message => sub {});
+    $self->on(message => sub {
+        my ($c, $data) = @_;
 
-    $self->app->state->on(update => sub {
-        $self->send(json => {action => '/state'});
+        my $msg;
+        eval { $msg = decode_json $data };
+        return if $@;
+
+        $c->send({json => {type => 'pong'}}) if $msg->{type} eq 'ping';
+    });
+
+    $self->app->state->on(track_change => sub {
+        $self->send({json => {type => 'update', item => 'track'}});
+    });
+
+    $self->app->state->on(playlist_update => sub {
+        $self->send({json => {type => 'update', item => 'playlist'}});
+    });
+
+    $self->app->state->on(user_joined => sub {
+        $self->send({json => {type => 'update', item => 'users'}});
+    });
+
+    $self->app->state->on(user_left => sub {
+        $self->send({json => {type => 'update', item => 'users'}});
     });
 }
 
@@ -108,34 +165,34 @@ sub append {
 
     } else {
 
+        my $track_id = (split /\:/, $uri)[2];
+
         # Fetch track info and add asynchronously
         my $ua = Mojo::UserAgent->new;
-        $ua->get('https://api.spotify.com/v1/tracks/' . $uri => {Accept => 'application/json'} => sub {
-            my ($ua, $tx) = @_;
+        my $tx = $ua->get('https://api.spotify.com/v1/tracks/' . $track_id);
 
-            if ($tx->res->code != 200) {
-                # TODO
-                # throw error on redis queue
-                say "[ERR] Spotify return error for $uri" and return;
+        if ($tx->error) {
+            # TODO
+            # throw error on redis queue
+            say Dumper($tx);
+            say "[ERR] Spotify return error for $uri" and return;
+        }
+
+        my $track = decode_json $tx->res->body;
+        $self->app->redis->hset('cache.tracks', $uri, encode_json {
+            artist => $track->{artists}->[0]->{name},
+            track => $track->{name},
+            album => {
+                name => $track->{album}->{name},
+                uri => $track->{album}->{uri},
+                cover => $track->{album}->{images}->[0]->{url} || ''
             }
-
-            my $track = decode_json $tx->res->body;
-            $self->app->redis->hadd('cache.tracks', $uri, encode_json {
-                artist => $track->{artists}->[0]->{name},
-                track => $track->{name},
-                album => {
-                    name => $track->{album}->{name},
-                    uri => $track->{album}->{uri},
-                    cover => $track->{album}->{images}->[0]->{url} || ''
-                }
-            });
-
-            $self->app->_queue_track($uri);
         });
 
-    }
+        $self->app->_queue_track($uri);
 
-    $self->render(json => {track => 'pending'});
+        $self->render(json => {ueued => $uri}) and return;
+    }
 }
 
 sub vote {
@@ -154,6 +211,53 @@ sub vote {
     $self->app->log->info("Voted track $uri");
 
     $self->render(json => {track => $score});
+}
+
+sub playpause {
+    my $self = shift;
+
+    my $status;
+    eval { $status = decode_json $self->app->redis->get('cache.state') };
+    if ($@) {
+        $self->render(json => {error => 'Unable to get state from memory'}, code => 500) and return;
+    }
+
+    if ($status->{playing}) {
+        $self->app->log->info("Pausing player");
+        $self->app->redis->set('config.playing', 0);
+        $self->app->spot->pause;
+        $self->render(json => {'config.playing' => 0});
+    } else {
+        $self->app->log->info("Starting player");
+
+        if ($status->{track}->{track_resource}->{uri}) {
+            $self->app->redis->set('config.playing', 1);
+            $self->app->spot->unpause;
+        } else {
+            $self->app->redis->set('config.playing', 1);
+            my $next_track = $self->app->_play_next;
+        }
+
+        $self->render(json => {'config.playing' => 1});
+    }
+}
+
+sub start {
+    my $self = shift;
+
+    if ($self->tx->remote_address ne '127.0.0.1') {
+        $self->render(json => {error => 'Permission denied'}, code => 401) and return;
+    }
+
+    my $status;
+    eval { $status = decode_json $self->app->redis->get('cache.state') };
+    if ($@) {
+        $self->render(json => {error => 'Unable to get state from memory'}, code => 500) and return;
+    }
+
+    $self->app->redis->set('config.playing', 1);
+    my $next_track = $self->app->_play_next;
+    $self->render(json => {current_track => $next_track});
 }
 
 1;

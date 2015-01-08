@@ -32,7 +32,7 @@ has state => sub {
 has ev => sub {
     my $self = shift;
 
-    Mojo::IOLoop->recurring(2, sub {
+    Mojo::IOLoop->recurring(1, sub {
 
         # I feel dirty about this.. surely there's a better way
         # Force a battle for superiority, only one can rule!
@@ -56,23 +56,23 @@ has ev => sub {
 
         if ($previous->{playing} && !$current->{playing} && $self->app->redis->get('config.playing')) {
 
-            if (scalar @{$self->app->redis->zrange('playlist.main', 0, 100)} > 0) {
-                if (!$self->app->_play_next) {
+            my $new_track;
+            if (scalar @{$self->app->redis->zrange('playlist.main', 0, 2)} > 0) {
+                $new_track = $self->app->_play_next;
+                if (!$new_track) {
                     $self->app->log->error('Error queuing up next track in event loop');
                 }
+
             } else {
                 $self->app->log->info("Nothing left to play :[");
             }
 
-            $self->app->redis->set('cache.state', encode_json $current);
-
-            if ($)
-
-            # TODO
-            # Expand this to emit specific events for play, pause, track_change, volume etc
-            # Then allow plugins/extensions to register interest in events
-            $self->app->state->update(1);
+            # Cache updated in event callback
+            # Stop here before we overwrite that with bad data
+            return;
         }
+
+        $self->app->redis->set('cache.state', encode_json $current);
     });
 };
 
@@ -91,6 +91,9 @@ sub startup {
                 my $c = shift;
                 my $access_token = shift;
                 my $account_info = shift;
+
+                # TODO
+                # Standardise information structure in session across all auth providers
 
                 # Remember the user for blaming and future trending data
                 if (!$self->app->redis->hexists('user.data', $account_info->{id})) {
@@ -112,7 +115,7 @@ sub startup {
     # preseed some values
     my $state = $self->app->spot->status;
     $self->app->redis->set('cache.state', encode_json $state);
-    $self->app->redis->set('config.playing', $state->{playing});
+    #$self->app->redis->set('config.playing', $state->{playing});
     if (!$self->app->redis->get('config.score')) {
         $self->app->redis->set('config.score', 1000);
     }
@@ -122,10 +125,15 @@ sub startup {
 
     my $r = $self->routes->bridge('/v2')->to(controller => 'v2', action => 'auth');
 
-    $r->get('/state')->to(controller => 'v2', action => 'state');
     $r->get('/status')->to(controller => 'v2', action => 'status');
+
+    $r->get('/state')->to(controller => 'v2', action => 'state');
+    $r->get('/playlist')->to(controller => 'v2', action => 'playlist');
     $r->get('/append/:uri')->to(controller => 'v2', action => 'append');
     $r->get('/vote/:uri')->to(controller => 'v2', action => 'vote');
+
+    $r->get('/playpause')->to(controller => 'v2', action => 'playpause');
+    $r->get('/start')->to(controller => 'v2', action => 'start');
 
     $r->websocket('/sock')->to(controller => 'v2', action => 'sock');
 
@@ -153,6 +161,7 @@ sub _play_next {
 
     # Fetch track play it and incr counters
     my $next = $self->app->redis->zrange('playlist.main', 0, 1)->[0];
+    return unless $next;
 
     $self->app->spot->play(uri => $next);
 
@@ -161,6 +170,10 @@ sub _play_next {
 
     # Clean up
     $self->app->redis->zrem('playlist.main', $next);
+
+    # Send an event to clients to update playlists
+    $self->app->state->playlist;
+    $self->app->state->track($self);
 
     return $next;
 }
@@ -177,12 +190,21 @@ sub _queue_track {
         say "[ERR] $uri passed to _queue_track but missing from cache" and return;
     }
 
-    $self->app->log->info( sprintf('Queuing track: %s - %s', $cache->{artist}, $cache->{track}) );
+    my $track;
+    eval { $track = decode_json $cache };
+    if ($@) {
+        say "[ERR] Error querying Redis for track $uri" and return;
+    }
+
+    $self->app->log->info( sprintf('Queuing track: %s - %s', $track->{artist}, $track->{track}) );
 
     # Grab the next score then add the track
     # Try this out as an alternative to keying the records
     my $score = $self->app->redis->incr('config.score');
     $self->app->redis->zadd('playlist.main', $score, $uri);
+
+    # Send an event to clients to update playlists
+    $self->app->state->playlist;
 
     return 1;
 }

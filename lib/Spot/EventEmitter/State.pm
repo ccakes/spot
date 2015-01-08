@@ -3,24 +3,30 @@ package Spot::EventEmitter::State;
 use Mojo::Base qw(Mojo::EventEmitter);
 
 use JSON;
+use Time::Piece;
+use Scalar::Util qw(weaken isweak);
 
 sub track {
     my $self = shift;
-    my $track = shift;
+    my $c = shift;
 
-    return unless $track;
+    # TODO
+    # Learn more about references and understand why this works.
+    weaken $c;
 
-    my $track_info = $self->app->redis->hget('cache.tracks', $track);
-    if ($track_info) {
-        $track = decode_json $track_info;
-    }
+    # Application-level change
+    # Push new state to Redis
+    my $state = $c->app->spot->status;
+    $c->app->redis->set('cache.state', encode_json $state);
 
-    $self->emit(track_change => $track);
+    say "[" . localtime->datetime . "DEBUG] Firing State::track()";
+    $self->emit(track_change => 1);
 }
 
 sub playlist {
     my $self = shift;
 
+    say "[" . localtime->datetime . "DEBUG] Firing State::playlist()";
     $self->emit(playlist_update => 1);
 }
 
@@ -30,6 +36,7 @@ sub user {
     my $status = shift;
 
     return unless $user_id;
+    say "[" . localtime->datetime . "DEBUG] Firing State::user($status)";
 
     if ($status) {
         $self->emit(user_joined => $user_id);
@@ -43,7 +50,7 @@ sub update {
     my $update = shift;
 
     return unless $update;
-    say "[DEBUG] Firing state update event";
+    say "[" . localtime->datetime . "DEBUG] Firing State::update()";
 
     $self->emit(update => $update);
 }
