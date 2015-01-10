@@ -6,10 +6,10 @@ use Spotify::Control;
 use EV;
 use Redis;
 use JSON::XS;
+use Mojo::Redis2;
+use Mojo::UserAgent;
 
-use Time::HiRes qw(usleep);
-
-use Spot::EventEmitter::State;
+use Time::HiRes qw(usleep);;
 
 use Data::Dumper::Simple;
 
@@ -19,6 +19,12 @@ has redis => sub {
     my $self = shift;
 
     return Redis->new(server => $self->app->config->{redis_host});
+};
+
+has redis2 => sub {
+    my $self = shift;
+
+    return Mojo::Redis2->new(url => $self->app->config->{redis_host});
 };
 
 has spot => sub {
@@ -65,6 +71,7 @@ has ev => sub {
 
             } else {
                 $self->app->log->info("Nothing left to play :[");
+                $self->app->redis->set('config.playing', 0);
             }
 
             # Cache updated in event callback
@@ -107,7 +114,7 @@ sub startup {
                 $c->session('access_token' => $access_token);
                 $c->session('account_info' => $account_info);
 
-                return $c->redirect_to('account');
+                return $c->redirect_to('/');
             }
         );
     }
@@ -127,6 +134,8 @@ sub startup {
 
     $r->get('/status')->to(controller => 'v2', action => 'status');
 
+    $r->get('/authentication')->to(controller => 'v2', action => 'authentication');
+
     $r->get('/state')->to(controller => 'v2', action => 'state');
     $r->get('/playlist')->to(controller => 'v2', action => 'playlist');
     $r->get('/append/:uri')->to(controller => 'v2', action => 'append');
@@ -140,8 +149,12 @@ sub startup {
     $r->get('/account' => sub {
         my $self = shift;
 
-        my $session = $self->session;
-        $self->render(json => $session);
+        my $account_info = {stored => {}, session => $self->session};
+        if ($self->session('account_info')) {
+            eval { $account_info->{stored} = decode_json $self->app->redis->hget('user.data', $self->session('account_info')->{id}) };
+        }
+
+        $self->render(json => $account_info);
     });
 
     $r->get('/logout' => sub {
@@ -165,15 +178,25 @@ sub _play_next {
 
     $self->app->spot->play(uri => $next);
 
-    $self->app->redis->set('cache.current_track', $next);
+    my $user_id = $self->app->redis->hget('playlist.user_map', $next);
+
+    my $user;
+    if ($user_id) {
+        eval { $user = decode_json $self->app->redis->hget('user.data', $user_id) };
+    }
+
+    $self->app->redis->set('cache.current_track', encode_json {track => $next, user => $user});
     $self->app->redis->hincrbyfloat('cache.played', $next, 1.0);
 
     # Clean up
     $self->app->redis->zrem('playlist.main', $next);
 
+    my $new_state = $self->app->spot->status;
+    $self->app->redis->set('cache.state', encode_json $new_state);
+
     # Send an event to clients to update playlists
-    $self->app->state->playlist;
-    $self->app->state->track($self);
+    $self->app->redis->publish('spot.events', 'update_playlist');
+    $self->app->redis->publish('spot.events', 'update_track');
 
     return $next;
 }
@@ -183,11 +206,36 @@ sub _queue_track {
     my $self = shift;
     my $uri = shift;
 
-    # Check that we already know about this track
+    # Check for a cache hit to avoid hitting Spotify
     my $cache = $self->app->redis->hget('cache.tracks', $uri);
-    # return unless $cache;
     if (!$cache) {
-        say "[ERR] $uri passed to _queue_track but missing from cache" and return;
+
+        my $track_id = (split /\:/, $uri)[2];
+
+        # Fetch track info and add asynchronously
+        my $ua = Mojo::UserAgent->new;
+        my $tx = $ua->get('https://api.spotify.com/v1/tracks/' . $track_id);
+
+        if ($tx->error) {
+            # TODO
+            # throw error on redis queue
+            say Dumper($tx);
+            say "[ERR] Spotify return error for $uri" and return;
+        }
+
+        my $track = decode_json $tx->res->body;
+        my $insert = {
+            artist => $track->{artists}->[0]->{name},
+            track => $track->{name},
+            album => {
+                name => $track->{album}->{name},
+                uri => $track->{album}->{uri},
+                cover => $track->{album}->{images}->[0]->{url} || ''
+            }
+        };
+
+        $self->app->redis->hset('cache.tracks', $uri, encode_json $insert);
+        $cache = $self->app->redis->hget('cache.tracks', $uri);
     }
 
     my $track;
@@ -204,7 +252,7 @@ sub _queue_track {
     $self->app->redis->zadd('playlist.main', $score, $uri);
 
     # Send an event to clients to update playlists
-    $self->app->state->playlist;
+    $self->app->redis->publish('spot.events', 'update_playlist');
 
     return 1;
 }

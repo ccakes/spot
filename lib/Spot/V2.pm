@@ -1,7 +1,6 @@
 package Spot::V2;
 use Mojo::Base 'Mojolicious::Controller';
 
-use Mojo::UserAgent;
 use JSON::XS;
 
 use Data::Dumper::Simple;
@@ -24,6 +23,16 @@ sub auth {
     return 1;
 }
 
+sub authentication {
+    my $self = shift;
+
+    if (exists $self->app->config->{auth} && !$self->session('account_info')) {
+        $self->render(json => {redirect => '/v2/state'}) and return;
+    }
+
+    $self->render(json => {redirect => undef});
+}
+
 sub state {
     my $self = shift;
 
@@ -33,6 +42,12 @@ sub state {
         $self->app->log->error('Unable to get stored state - ' . $@);
         $self->render(json => {error => 'Unable to get state from Redis'}, code => 500) and return;
     }
+
+    my $cache;
+    eval { $cache = decode_json $self->app->redis->hget('cache.tracks', $state->{track}->{track_resource}->{uri}) };
+
+    my $user;
+    eval { $user = decode_json($self->app->redis->get('cache.current_track'))->{user} };
 
     my $response = {
         client_version => $state->{client_version},
@@ -48,8 +63,10 @@ sub state {
             },
             album => {
                 name => $state->{track}->{album_resource}->{name},
-                uri => $state->{track}->{album_resource}->{uri}
-            }
+                uri => $state->{track}->{album_resource}->{uri},
+                cover => $cache->{album}->{cover} || ''
+            },
+            user => $user
         }
     };
 
@@ -78,6 +95,17 @@ sub playlist {
         }
         $track->{uri} = $_;
 
+        # Add user if auth
+        if (exists $self->app->config->{auth}) {
+            my $id = $self->app->redis->hget('playlist.user_map', $_);
+            if ($id) {
+                my $user;
+                eval { $user = decode_json $self->app->redis->hget('user.data', $id) };
+
+                $track->{user} = $user;
+            }
+        }
+
         push @$playlist, $track;
     }
 
@@ -100,11 +128,10 @@ sub status {
 sub sock {
     my $self = shift;
 
-    #my $loop = Mojo::IOLoop->singleton;
-    #$loop->stream($self->tx->connection)->timeout(60);
     $self->inactivity_timeout(300);
 
-    if (exists $self->app->config->{auth} && $self->session('account_info')) {
+    #if (exists $self->app->config->{auth} && $self->session('account_info')) {
+    if (0) {
         my $account = $self->session('account_info');
 
         # Manage "current listeners" via websocket connections
@@ -117,7 +144,20 @@ sub sock {
         });
     }
 
-    # drop inbound messages
+    my $sub = $self->app->redis2->subscribe(['spot.events']);
+
+    my $cb = $sub->on(message => sub {
+        my ($redis, $data, $topic) = @_;
+
+        if ($data eq 'update_playlist') {
+            $self->send({json => {type => 'update', item => 'playlist'}});
+        }
+        elsif ($data eq 'update_track') {
+            $self->send({json => {type => 'update', item => 'track'}});
+        }
+    });
+
+    # ping pong
     $self->on(message => sub {
         my ($c, $data) = @_;
 
@@ -128,20 +168,11 @@ sub sock {
         $c->send({json => {type => 'pong'}}) if $msg->{type} eq 'ping';
     });
 
-    $self->app->state->on(track_change => sub {
-        $self->send({json => {type => 'update', item => 'track'}});
-    });
+    $self->on(finish => sub {
+        my $self = shift;
 
-    $self->app->state->on(playlist_update => sub {
-        $self->send({json => {type => 'update', item => 'playlist'}});
-    });
-
-    $self->app->state->on(user_joined => sub {
-        $self->send({json => {type => 'update', item => 'users'}});
-    });
-
-    $self->app->state->on(user_left => sub {
-        $self->send({json => {type => 'update', item => 'users'}});
+        $self->app->log->info('=== WebSocket disconnect ===');
+        $self->app->redis2->unsubscribe(message => $cb);
     });
 }
 
@@ -158,49 +189,12 @@ sub append {
         $self->render(json => {error => 'Track exists in playlist'}) and return;
     }
 
-    # Check for a cache hit to avoid hitting Spotify
-    my $cache = $self->app->redis->hget('cache.tracks', $uri);
-    if ($cache) {
-
-        $self->app->_queue_track($uri);
-        $self->render(json => {track => 'queued'}) and return;
-
-    } else {
-
-        my $track_id = (split /\:/, $uri)[2];
-
-        # Fetch track info and add asynchronously
-        my $ua = Mojo::UserAgent->new;
-        my $tx = $ua->get('https://api.spotify.com/v1/tracks/' . $track_id);
-
-        if ($tx->error) {
-            # TODO
-            # throw error on redis queue
-            say Dumper($tx);
-            say "[ERR] Spotify return error for $uri" and return;
-        }
-
-        my $track = decode_json $tx->res->body;
-        my $cache = {
-            artist => $track->{artists}->[0]->{name},
-            track => $track->{name},
-            album => {
-                name => $track->{album}->{name},
-                uri => $track->{album}->{uri},
-                cover => $track->{album}->{images}->[0]->{url} || ''
-            }
-        };
-
-        if (exists $self->app->config->{auth} && $self->session('account_info')) {
-            $cache->{user} = {id => $self->session('account_info')->{id}, display => $self->session('account_info')->{displayName}};
-        }
-
-        $self->app->redis->hset('cache.tracks', $uri, encode_json $cache);
-
-        $self->app->_queue_track($uri);
-
-        $self->render(json => {ueued => $uri}) and return;
+    if ($self->app->_queue_track($uri) && $self->session('account_info')) {
+        my $account_info = $self->session('account_info');
+        $self->app->redis->hset('playlist.user_map', $uri, $account_info->{id});
     }
+
+    $self->render(json => {queued => $uri}) and return;
 }
 
 sub vote {
