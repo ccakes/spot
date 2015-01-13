@@ -171,7 +171,6 @@ sub sock {
     $self->on(finish => sub {
         my $self = shift;
 
-        $self->app->log->info('=== WebSocket disconnect ===');
         $self->app->redis2->unsubscribe(message => $cb);
     });
 }

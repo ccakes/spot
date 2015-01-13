@@ -31,10 +31,6 @@ has spot => sub {
     return Spotify::Control->new;
 };
 
-has state => sub {
-    return Spot::EventEmitter::State->new;
-};
-
 has ev => sub {
     my $self = shift;
 
@@ -184,6 +180,8 @@ sub _play_next {
     if ($user_id) {
         eval { $user = decode_json $self->app->redis->hget('user.data', $user_id) };
     }
+
+    $self->app->log->info( sprintf('Playing track: %s', $next) );
 
     $self->app->redis->set('cache.current_track', encode_json {track => $next, user => $user});
     $self->app->redis->hincrbyfloat('cache.played', $next, 1.0);
