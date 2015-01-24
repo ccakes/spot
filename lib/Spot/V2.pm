@@ -9,6 +9,10 @@ use Data::Dumper::Simple;
 sub auth {
     my $self = shift;
 
+    # TODO
+    # Remove bridge route if safe to do so
+    return 1;
+
     # Grab the final action from the stack
     my $action = $self->match->{stack}->[-1]->{action};
 
@@ -23,14 +27,42 @@ sub auth {
     return 1;
 }
 
-sub authentication {
+sub user {
     my $self = shift;
 
-    if (exists $self->app->config->{auth} && !$self->session('account_info')) {
-        $self->render(json => {redirect => '/v2/state'}) and return;
+    if (exists $self->app->config->{auth} && $self->app->config->{auth}->{enabled}) {
+
+        my $spot_uid = $self->param('uid');
+        my $user;
+
+        # Nothing - redirect to auth provider
+        if (!$self->session('spot_user') && !$spot_uid) {
+            return $self->redirect_to( sprintf('/auth/%s/authenticate', lc $self->app->config->{auth}->{module}) );
+        }
+        # Saved session, lets grab the details from Redis
+        elsif (!$self->session('spot_user')) {
+            if ($self->app->redis->hexists('user.data', $spot_uid)) {
+                eval { $user = decode_json $self->app->redis->hget('user.data', $spot_uid) };
+
+                $self->app->redis->hdel('user.data', $spot_uid) if $@; # Delete entry if not valid JSON
+            }
+
+            # If either the user doesn't exist in Redis or the data is corrupted, start again
+            if (!$user) {
+                return $self->redirect_to( sprintf('/auth/%s/authenticate', lc $self->app->config->{auth}->{module}) );
+            }
+
+            $self->session('spot_user', $user);
+        }
+        # Valid session
+        else {
+            $user = $self->session('spot_user');
+        }
+
+        $self->render(json => $self->session('spot_user')) and return;
     }
 
-    $self->render(json => {redirect => undef});
+    $self->render(text => '', code => 204);
 }
 
 sub state {
@@ -144,7 +176,7 @@ sub sock {
         });
     }
 
-    my $sub = $self->app->redis2->subscribe(['spot.events']);
+    my $sub = $self->app->redis->subscribe(['spot.events']);
 
     my $cb = $sub->on(message => sub {
         my ($redis, $data, $topic) = @_;
@@ -171,7 +203,7 @@ sub sock {
     $self->on(finish => sub {
         my $self = shift;
 
-        $self->app->redis2->unsubscribe(message => $cb);
+        $self->app->redis->unsubscribe(message => $cb);
     });
 }
 
@@ -246,6 +278,9 @@ sub playpause {
 sub start {
     my $self = shift;
 
+    # TODO
+    # This check doesn't need to be here
+    # Maybe go back to hijacking the player, regardless of state, when a track is queued?
     if ($self->tx->remote_address ne '127.0.0.1') {
         $self->render(json => {error => 'Permission denied'}, code => 401) and return;
     }

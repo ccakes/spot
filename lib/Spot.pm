@@ -4,7 +4,6 @@ use Mojo::Base 'Mojolicious';
 use Spotify::Control;
 
 use EV;
-use Redis;
 use JSON::XS;
 use Mojo::Redis2;
 use Mojo::UserAgent;
@@ -16,12 +15,6 @@ use Data::Dumper::Simple;
 my $victor = 0;
 
 has redis => sub {
-    my $self = shift;
-
-    return Redis->new(server => $self->app->config->{redis_host});
-};
-
-has redis2 => sub {
     my $self = shift;
 
     return Mojo::Redis2->new(url => $self->app->config->{redis_host});
@@ -95,22 +88,22 @@ sub startup {
                 my $access_token = shift;
                 my $account_info = shift;
 
-                # TODO
-                # Standardise information structure in session across all auth providers
+                my $user = {
+                    display_name => $account_info->{displayName},
+                    gender => $account_info->{gender},
+                    image => $account_info->{image}->{url} || '',
+                    oauth_token => $access_token
+                };
 
                 # Remember the user for blaming and future trending data
                 if (!$self->app->redis->hexists('user.data', $account_info->{id})) {
-                    $self->app->redis->hset('user.data', $account_info->{id}, encode_json {
-                        display_name => $account_info->{displayName},
-                        gender => $account_info->{gender},
-                        image => $account_info->{image}->{url} || ''
-                    });
+                    $self->app->redis->hset('user.data', $account_info->{id}, encode_json $user);
                 }
 
-                $c->session('access_token' => $access_token);
-                $c->session('account_info' => $account_info);
+                $c->session('spot_user' => $user);
 
-                return $c->redirect_to('/');
+                #return $c->redirect_to('user');
+                $c->render(json => $user);
             }
         );
     }
@@ -130,8 +123,6 @@ sub startup {
 
     $r->get('/status')->to(controller => 'v2', action => 'status');
 
-    $r->get('/authentication')->to(controller => 'v2', action => 'authentication');
-
     $r->get('/state')->to(controller => 'v2', action => 'state');
     $r->get('/playlist')->to(controller => 'v2', action => 'playlist');
     $r->get('/append/:uri')->to(controller => 'v2', action => 'append');
@@ -139,6 +130,8 @@ sub startup {
 
     $r->get('/playpause')->to(controller => 'v2', action => 'playpause');
     $r->get('/start')->to(controller => 'v2', action => 'start');
+
+    $r->get('/user/:uid')->to(controller => 'v2', action => 'user', uid => undef);
 
     $r->websocket('/sock')->to(controller => 'v2', action => 'sock');
 

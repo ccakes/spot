@@ -9,8 +9,8 @@
 
     auth => {
 
-        # Actions that require a valid user
-        actions => [qw(append vote sock)],
+        # Enable user tracking?
+        enabled => 0,
 
         # These are passed directly through to Web::Auth
         # See https://github.com/hayajo/Mojolicious-Plugin-Web-Auth for documentation
