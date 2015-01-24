@@ -4,13 +4,11 @@ use Mojo::Base 'Mojolicious';
 use Spotify::Control;
 
 use EV;
-use JSON::XS;
+use JSON;
 use Mojo::Redis2;
 use Mojo::UserAgent;
 
-use Time::HiRes qw(usleep);;
-
-use Data::Dumper::Simple;
+use Time::HiRes qw(usleep);
 
 my $victor = 0;
 
@@ -210,7 +208,6 @@ sub _queue_track {
         if ($tx->error) {
             # TODO
             # throw error on redis queue
-            say Dumper($tx);
             say "[ERR] Spotify return error for $uri" and return;
         }
 

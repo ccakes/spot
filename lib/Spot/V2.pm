@@ -1,9 +1,7 @@
 package Spot::V2;
 use Mojo::Base 'Mojolicious::Controller';
 
-use JSON::XS;
-
-use Data::Dumper::Simple;
+use JSON;
 
 # Bridge for handling authentication
 sub auth {
