@@ -10,7 +10,8 @@ I'm also **not** a web developer by any stretch so this was a fun opportunity fo
 
 I'm aiming to include a script to bootstrap the install on linux & OS X but for now, here's something of a step-by-step.
 ```bash
-# If you haven't already, set up [Perlbrew](http://perlbrew.pl/) and [cpanm](http://perlbrew.pl/Perlbrew-and-Friends.html)
+# If you haven't already, set up Perlbrew and cpanm, go do that now.
+# A local Perl environment isn't required but highly recommended
 
 # Install Redis
 brew install redis
