@@ -17,7 +17,7 @@ sub auth {
     $self->tx->res->headers->header('Access-Control-Allow-Origin' => '*');
 
     if (exists $self->app->config->{auth} && grep /^$action$/, @{$self->app->config->{auth}->{actions}}) {
-        if (!$self->session('account_info')) {
+        if (!$self->session('spot_user')) {
             return $self->redirect_to( sprintf('/auth/%s/authenticate', lc $self->app->config->{auth}->{module}) );
         }
     }
@@ -162,7 +162,7 @@ sub sock {
 
     #if (exists $self->app->config->{auth} && $self->session('account_info')) {
     if (0) {
-        my $account = $self->session('account_info');
+        my $account = $self->session('spot_user');
 
         # Manage "current listeners" via websocket connections
         $self->app->redis->rpush('cache.users', $account->{id});
@@ -218,8 +218,8 @@ sub append {
         $self->render(json => {error => 'Track exists in playlist'}) and return;
     }
 
-    if ($self->app->_queue_track($uri) && $self->session('account_info')) {
-        my $account_info = $self->session('account_info');
+    if ($self->app->_queue_track($uri) && $self->session('spot_user')) {
+        my $account_info = $self->session('spot_user');
         $self->app->redis->hset('playlist.user_map', $uri, $account_info->{id});
     }
 

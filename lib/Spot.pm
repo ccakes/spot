@@ -87,6 +87,7 @@ sub startup {
                 my $account_info = shift;
 
                 my $user = {
+                    id => $account_info->{id},
                     display_name => $account_info->{displayName},
                     gender => $account_info->{gender},
                     image => $account_info->{image}->{url} || '',
@@ -101,7 +102,8 @@ sub startup {
                 $c->session('spot_user' => $user);
 
                 #return $c->redirect_to('user');
-                $c->render(json => $user);
+                #$c->render(json => $user);
+                $c->render(text => '<script type="text/javascript">window.open(window.location, "_self").close();</script>');
             }
         );
     }
@@ -175,10 +177,11 @@ sub _play_next {
     $self->app->log->info( sprintf('Playing track: %s', $next) );
 
     $self->app->redis->set('cache.current_track', encode_json {track => $next, user => $user});
-    $self->app->redis->hincrbyfloat('cache.played', $next, 1.0);
+    $self->app->redis->hincrby('cache.played', $next, 1);
 
     # Clean up
     $self->app->redis->zrem('playlist.main', $next);
+    $self->app->redis->hdel('playlist.user_map', $next);
 
     my $new_state = $self->app->spot->status;
     $self->app->redis->set('cache.state', encode_json $new_state);
