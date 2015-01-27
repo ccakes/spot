@@ -75,7 +75,7 @@ sub startup {
 
     $self->plugin('Config', file => sprintf('%s/../spot.conf', $FindBin::Bin));
 
-    if (exists $self->app->config->{auth}) {
+    if (exists $self->app->config->{auth} && $self->app->config->{auth}->{enabled}) {
         $self->plugin('Web::Auth',
             module => $self->app->config->{auth}->{module},
             key => $self->app->config->{auth}->{key},

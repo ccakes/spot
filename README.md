@@ -41,7 +41,7 @@ At this stage, you should have Mojolicious listening on tcp/3000 accepting reque
 
 Next step is to run under Hypnotoad and to put something like nginx in front of everything. There is a sample nginx config in [examples/](https://github.com/ccakes/spot/tree/master/examples).
 
-# Next Steps
+## Next Steps
 
 Visit the [web interface](https://github.com/ccakes/spot-webui) repository and install that along side Spot.
 
