@@ -241,6 +241,9 @@ sub vote {
     my $score = $self->app->redis->zincrby('playlist.main', -10, $uri);
     $self->app->log->info("Voted track $uri");
 
+    # Send an event to clients to update playlists
+    $self->app->redis->publish('spot.events', 'update_playlist');
+
     $self->render(json => {track => $score});
 }
 
