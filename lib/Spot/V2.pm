@@ -96,6 +96,10 @@ sub state {
                 uri => $state->{track}->{album_resource}->{uri},
                 cover => $cache->{album}->{cover} || ''
             },
+            time => {
+                current => int $state->{playing_position},
+                length => $state->{track}->{length}
+            },
             user => $user
         }
     };
