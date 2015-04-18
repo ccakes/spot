@@ -10,6 +10,6 @@ eval {
 };
 
 # Mojolicious and Mojo::Redis
-requires 'Mojolicious', '== 5.70';
+requires 'Mojolicious';
 requires 'Mojo::Redis2';
 requires 'Mojolicious::Plugin::Web::Auth';
