@@ -1,5 +1,6 @@
 requires 'EV';
 requires 'JSON';
+requires 'DBD::SQLite';
 
 requires 'LWP::UserAgent';
 

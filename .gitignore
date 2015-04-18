@@ -3,3 +3,4 @@ script/*.pid
 .DS_Store
 
 spot.conf
+spot.db

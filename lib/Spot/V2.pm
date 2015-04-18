@@ -3,28 +3,6 @@ use Mojo::Base 'Mojolicious::Controller';
 
 use JSON;
 
-# Bridge for handling authentication
-sub auth {
-    my $self = shift;
-
-    # TODO
-    # Remove bridge route if safe to do so
-    return 1;
-
-    # Grab the final action from the stack
-    my $action = $self->match->{stack}->[-1]->{action};
-
-    $self->tx->res->headers->header('Access-Control-Allow-Origin' => '*');
-
-    if (exists $self->app->config->{auth} && grep /^$action$/, @{$self->app->config->{auth}->{actions}}) {
-        if (!$self->session('spot_user')) {
-            return $self->redirect_to( sprintf('/auth/%s/authenticate', lc $self->app->config->{auth}->{module}) );
-        }
-    }
-
-    return 1;
-}
-
 sub user {
     my $self = shift;
 
@@ -39,10 +17,10 @@ sub user {
         }
         # Saved session, lets grab the details from Redis
         elsif (!$self->session('spot_user')) {
-            if ($self->app->redis->hexists('user.data', $spot_uid)) {
-                eval { $user = decode_json $self->app->redis->hget('user.data', $spot_uid) };
+            if ($self->app->redis->hexists('spot:user:data', $spot_uid)) {
+                eval { $user = decode_json $self->app->redis->hget('spot:user:data', $spot_uid) };
 
-                $self->app->redis->hdel('user.data', $spot_uid) if $@; # Delete entry if not valid JSON
+                $self->app->redis->hdel('spot:user:data', $spot_uid) if $@; # Delete entry if not valid JSON
             }
 
             # If either the user doesn't exist in Redis or the data is corrupted, start again
@@ -67,17 +45,17 @@ sub state {
     my $self = shift;
 
     my $state;
-    eval { $state = decode_json $self->app->redis->get('cache.state') };
+    eval { $state = decode_json $self->app->redis->get('spot:cache:state') };
     if ($@) {
         $self->app->log->error('Unable to get stored state - ' . $@);
         $self->render(json => {error => 'Unable to get state from Redis'}, code => 500) and return;
     }
 
     my $cache;
-    eval { $cache = decode_json $self->app->redis->hget('cache.tracks', $state->{track}->{track_resource}->{uri}) };
+    eval { $cache = decode_json $self->app->redis->hget('spot:cache:tracks', $state->{track}->{track_resource}->{uri}) };
 
     my $user;
-    eval { $user = decode_json($self->app->redis->get('cache.current_track'))->{user} };
+    eval { $user = decode_json($self->app->redis->get('spot:cache:current_track'))->{user} };
 
     my $response = {
         client_version => $state->{client_version},
@@ -111,10 +89,10 @@ sub playlist {
     my $self = shift;
 
     my $playlist = [];
-    my $zset = $self->app->redis->zrange('playlist.main', 0, 100);
+    my $zset = $self->app->redis->zrange('spot:playlist:main', 0, 100);
 
     foreach (@$zset) {
-        my $track_data = $self->app->redis->hget('cache.tracks', $_);
+        my $track_data = $self->app->redis->hget('spot:cache:tracks', $_);
 
         if (!$track_data) {
             $self->app->log->error("Unable to lookup track data for $_");
@@ -131,10 +109,10 @@ sub playlist {
 
         # Add user if auth
         if (exists $self->app->config->{auth}) {
-            my $id = $self->app->redis->hget('playlist.user_map', $_);
+            my $id = $self->app->redis->hget('spot:playlist:user_map', $_);
             if ($id) {
                 my $user;
-                eval { $user = decode_json $self->app->redis->hget('user.data', $id) };
+                eval { $user = decode_json $self->app->redis->hget('spot:user:data', $id) };
 
                 $track->{user} = $user;
             }
@@ -150,7 +128,7 @@ sub status {
     my $self = shift;
 
     my $state;
-    eval { $state = decode_json $self->app->redis->get('cache.state') };
+    eval { $state = decode_json $self->app->redis->get('spot:cache:state') };
     if ($@) {
         $self->app->log->error('Unable to get stored state - ' . $@);
         $self->render(json => {error => 'Unable to get state from Redis'}, code => 500) and return;
@@ -169,11 +147,11 @@ sub sock {
         my $account = $self->session('spot_user');
 
         # Manage "current listeners" via websocket connections
-        $self->app->redis->rpush('cache.users', $account->{id});
+        $self->app->redis->rpush('spot:cache:users', $account->{id});
         $self->app->state->user($account->{id}, 1);
 
         $self->on(finish => sub {
-            $self->app->redis->lrem('cache.users', 0, $account->{id});
+            $self->app->redis->lrem('spot:cache:users', 0, $account->{id});
             $self->app->state->user($account->{id});
         });
     }
@@ -218,13 +196,13 @@ sub append {
     }
 
     # Check for duplicates
-    if ($self->app->redis->zscore('playlist.main', $uri)) {
+    if ($self->app->redis->zscore('spot:playlist:main', $uri)) {
         $self->render(json => {error => 'Track exists in playlist'}) and return;
     }
 
     if ($self->app->_queue_track($uri) && $self->session('spot_user')) {
         my $account_info = $self->session('spot_user');
-        $self->app->redis->hset('playlist.user_map', $uri, $account_info->{id});
+        $self->app->redis->hset('spot:playlist:user_map', $uri, $account_info->{id});
     }
 
     $self->render(json => {queued => $uri}) and return;
@@ -238,11 +216,11 @@ sub vote {
         $self->render(json => {error => 'Missing URI'}, code => 400) and return;
     }
 
-    if (!$self->app->redis->zscore('playlist.main', $uri)) {
+    if (!$self->app->redis->zscore('spot:playlist:main', $uri)) {
         $self->render(json => {error => 'Given track not in current playlist'}, code => 400) and return;
     }
 
-    my $score = $self->app->redis->zincrby('playlist.main', -10, $uri);
+    my $score = $self->app->redis->zincrby('spot:playlist:main', -10, $uri);
     $self->app->log->info("Voted track $uri");
 
     # Send an event to clients to update playlists
@@ -255,28 +233,28 @@ sub playpause {
     my $self = shift;
 
     my $status;
-    eval { $status = decode_json $self->app->redis->get('cache.state') };
+    eval { $status = decode_json $self->app->redis->get('spot:cache:state') };
     if ($@) {
         $self->render(json => {error => 'Unable to get state from memory'}, code => 500) and return;
     }
 
     if ($status->{playing}) {
         $self->app->log->info("Pausing player");
-        $self->app->redis->set('config.playing', 0);
+        $self->app->redis->set('spot:config:playing', 0);
         $self->app->spot->pause;
-        $self->render(json => {'config.playing' => 0});
+        $self->render(json => {'spot:config:playing' => 0});
     } else {
         $self->app->log->info("Starting player");
 
         if ($status->{track}->{track_resource}->{uri}) {
-            $self->app->redis->set('config.playing', 1);
+            $self->app->redis->set('spot:config:playing', 1);
             $self->app->spot->unpause;
         } else {
-            $self->app->redis->set('config.playing', 1);
+            $self->app->redis->set('spot:config:playing', 1);
             my $next_track = $self->app->_play_next;
         }
 
-        $self->render(json => {'config.playing' => 1});
+        $self->render(json => {'spot:config:playing' => 1});
     }
 }
 
@@ -291,12 +269,12 @@ sub start {
     }
 
     my $status;
-    eval { $status = decode_json $self->app->redis->get('cache.state') };
+    eval { $status = decode_json $self->app->redis->get('spot:cache:state') };
     if ($@) {
         $self->render(json => {error => 'Unable to get state from memory'}, code => 500) and return;
     }
 
-    $self->app->redis->set('config.playing', 1);
+    $self->app->redis->set('spot:config:playing', 1);
     my $next_track = $self->app->_play_next;
     $self->render(json => {current_track => $next_track});
 }
