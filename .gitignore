@@ -1,6 +1,9 @@
 log/*.log
 script/*.pid
-.DS_Store
+local/
 
 spot.conf
 spot.db
+cpanfile.snapshot
+
+.DS_Store

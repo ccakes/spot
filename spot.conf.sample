@@ -2,6 +2,10 @@
     # Redis host
     # Used to store application state and track data
     redis_host => 'localhost:6379',
+    
+    # Optional backing database for long-term history
+    # Not used for much right now. Set to undef if not used
+    persistent_dsn => 'dbi:SQLite:dbname=spot.db',
 
     # Optional authentication using Mojolicious::Plugin::Web::Auth
     # This isn't used as a permission system, rather as additional information
@@ -11,6 +15,9 @@
 
         # Enable user tracking?
         enabled => 0,
+        
+        # Force users to login before they can queue tracks?
+        enforced => 0,
 
         # These are passed directly through to Web::Auth
         # See https://github.com/hayajo/Mojolicious-Plugin-Web-Auth for documentation

@@ -6,6 +6,7 @@ use Spotify::Control;
 use EV;
 use DBI;
 use JSON;
+use Time::Piece;
 use Mojo::Redis2;
 use Mojo::UserAgent;
 
@@ -22,7 +23,21 @@ has redis => sub {
 has db => sub {
     my $self = shift;
     
-    return DBI->connect($self->app->config->{persistent_dsn});
+    return unless $self->app->config->{persistent_dsn};
+    
+    my $db = DBI->connect($self->app->config->{persistent_dsn});
+    
+    my $create = "
+        CREATE TABLE IF NOT EXISTS track_history (
+            track primary key,
+            date int,
+            user text
+        )
+    ";
+    
+    $db->do($create) or die "Error initialising database: " . $db->errstr;
+    
+    return $db;
 };
 
 has spot => sub {
@@ -122,7 +137,7 @@ sub startup {
     if (!$self->app->redis->get('spot:config:score')) {
         $self->app->redis->set('spot:config:score', 1000);
     }
-    
+
     $self->app->redis->del('spot:config:master');
     $self->app->ev;
 
@@ -184,7 +199,7 @@ sub _play_next {
     $self->app->log->info( sprintf('Playing track: %s', $next) );
 
     $self->app->redis->set('spot:cache:current_track', encode_json {track => $next, user => $user});
-    $self->app->redis->hincrby('spot:cache:played', $next, 1);
+    $self->app->redis->zincrby('spot:cache:zplayed', 1, $next);
 
     # Clean up
     $self->app->redis->zrem('spot:playlist:main', $next);
@@ -196,6 +211,15 @@ sub _play_next {
     # Send an event to clients to update playlists
     $self->app->redis->publish('spot.events', 'update_playlist');
     $self->app->redis->publish('spot.events', 'update_track');
+    
+    # If this is the last song, grab a random track from the history and queue it
+    # Ultimately this may come from spot:cache:zplayed so selections can be based
+    # off popularity but for now, spot:cache:tracks will do
+    if ($self->app->redis->zcount('spot:playlist:main', '-inf', '+inf') < 1) {
+        my $tracks = $self->app->redis->hkeys('spot:cache:tracks');
+        my $track = $tracks->[rand scalar(@{$tracks})];
+        $self->_queue_track($track);
+    }
 
     return $next;
 }
@@ -204,6 +228,7 @@ sub _play_next {
 sub _queue_track {
     my $self = shift;
     my $uri = shift;
+    my $user = shift;
 
     # Check for a cache hit to avoid hitting Spotify
     my $cache = $self->app->redis->hget('spot:cache:tracks', $uri);
@@ -248,6 +273,19 @@ sub _queue_track {
     # Try this out as an alternative to keying the records
     my $score = $self->app->redis->incr('spot:config:score');
     $self->app->redis->zadd('spot:playlist:main', $score, $uri);
+    
+    # Map track to user if we have the data
+    if (ref $user) {
+        $self->app->redis->hset('spot:playlist:user_map', $uri, $user->{id});
+        
+        # If we have a persistent datastore configured, add a record for the track
+        if (defined $self->app->config->{persistent_dsn}) {
+            my $insert = "INSERT INTO track_history (track, date, user) VALUES (?, ?, ?)";
+            my $stmt = $self->app->db->prepare($insert);
+            $stmt->execute($uri, localtime->datetime, $user->{id}) or
+                ($self->app->log->info('Error inserting on persistent database, disabling') and $self->app->config->{persistent_dsn} = undef);
+        }
+    }
 
     # Send an event to clients to update playlists
     $self->app->redis->publish('spot.events', 'update_playlist');

@@ -13,7 +13,8 @@ sub user {
 
         # Nothing - redirect to auth provider
         if (!$self->session('spot_user') && !$spot_uid) {
-            return $self->redirect_to( sprintf('/auth/%s/authenticate', lc $self->app->config->{auth}->{module}) );
+            #return $self->redirect_to( sprintf('/auth/%s/authenticate', lc $self->app->config->{auth}->{module}) );
+            $self->render(json => {action => 'login', redirect => sprintf('/auth/%s/authenticate', lc $self->app->config->{auth}->{module})}, status => 404) and return;
         }
         # Saved session, lets grab the details from Redis
         elsif (!$self->session('spot_user')) {
@@ -25,7 +26,8 @@ sub user {
 
             # If either the user doesn't exist in Redis or the data is corrupted, start again
             if (!$user) {
-                return $self->redirect_to( sprintf('/auth/%s/authenticate', lc $self->app->config->{auth}->{module}) );
+                #return $self->redirect_to( sprintf('/auth/%s/authenticate', lc $self->app->config->{auth}->{module}) );
+                $self->render(json => {action => 'login', redirect => sprintf('/auth/%s/authenticate', lc $self->app->config->{auth}->{module})}, status => 400) and return;
             }
 
             $self->session('spot_user', $user);
@@ -38,7 +40,7 @@ sub user {
         $self->render(json => $self->session('spot_user')) and return;
     }
 
-    $self->render(text => '', code => 204);
+    $self->render(text => '', status => 204);
 }
 
 sub state {
@@ -48,7 +50,7 @@ sub state {
     eval { $state = decode_json $self->app->redis->get('spot:cache:state') };
     if ($@) {
         $self->app->log->error('Unable to get stored state - ' . $@);
-        $self->render(json => {error => 'Unable to get state from Redis'}, code => 500) and return;
+        $self->render(json => {error => 'Unable to get state from Redis'}, status => 500) and return;
     }
 
     my $cache;
@@ -56,6 +58,10 @@ sub state {
 
     my $user;
     eval { $user = decode_json($self->app->redis->get('spot:cache:current_track'))->{user} };
+
+    my $next = $self->app->redis->zrange('spot:playlist:main', 0, 1)->[0] || 'end';
+    my $next_cache;
+    eval { $next_cache = decode_json $self->app->redis->hget('spot:cache:tracks', $next) };
 
     my $response = {
         client_version => $state->{client_version},
@@ -79,7 +85,8 @@ sub state {
                 length => $state->{track}->{length}
             },
             user => $user
-        }
+        },
+        next => $next_cache
     };
 
     $self->render(json => $response);
@@ -131,7 +138,7 @@ sub status {
     eval { $state = decode_json $self->app->redis->get('spot:cache:state') };
     if ($@) {
         $self->app->log->error('Unable to get stored state - ' . $@);
-        $self->render(json => {error => 'Unable to get state from Redis'}, code => 500) and return;
+        $self->render(json => {error => 'Unable to get state from Redis'}, status => 500) and return;
     }
 
     $self->render(json => $state);
@@ -190,20 +197,24 @@ sub sock {
 sub append {
     my $self = shift;
     my $uri = $self->param('uri');
+    
+    my $account_info = $self->session('spot_user');
+    if (exists $self->app->config->{auth}->{enforced} && $self->app->config->{auth}->{enforced}) {
+        if (!$account_info) {
+            $self->render(json => {error => 'Unauthenticated action not permitted'}, status => 401) and return;
+        }
+    }
 
     if (!$uri) {
-        $self->render(json => {error => 'Missing URI'}, code => 400) and return;
+        $self->render(json => {error => 'Missing URI'}, status => 400) and return;
     }
 
     # Check for duplicates
     if ($self->app->redis->zscore('spot:playlist:main', $uri)) {
-        $self->render(json => {error => 'Track exists in playlist'}) and return;
+        $self->render(json => {error => 'Track exists in playlist'}, status => 400) and return;
     }
 
-    if ($self->app->_queue_track($uri) && $self->session('spot_user')) {
-        my $account_info = $self->session('spot_user');
-        $self->app->redis->hset('spot:playlist:user_map', $uri, $account_info->{id});
-    }
+    $self->app->_queue_track($uri, $account_info);
 
     $self->render(json => {queued => $uri}) and return;
 }
@@ -211,13 +222,20 @@ sub append {
 sub vote {
     my $self = shift;
     my $uri = $self->param('uri');
+    
+    my $account_info = $self->session('spot_user');
+    if (exists $self->app->config->{auth}->{enforced} && $self->app->config->{auth}->{enforced}) {
+        if (!$account_info) {
+            $self->render(json => {error => 'Unauthenticated action not permitted'}, status => 401) and return;
+        }
+    }
 
     if (!$uri) {
-        $self->render(json => {error => 'Missing URI'}, code => 400) and return;
+        $self->render(json => {error => 'Missing URI'}, status => 400) and return;
     }
 
     if (!$self->app->redis->zscore('spot:playlist:main', $uri)) {
-        $self->render(json => {error => 'Given track not in current playlist'}, code => 400) and return;
+        $self->render(json => {error => 'Given track not in current playlist'}, status => 400) and return;
     }
 
     my $score = $self->app->redis->zincrby('spot:playlist:main', -10, $uri);
@@ -235,7 +253,7 @@ sub playpause {
     my $status;
     eval { $status = decode_json $self->app->redis->get('spot:cache:state') };
     if ($@) {
-        $self->render(json => {error => 'Unable to get state from memory'}, code => 500) and return;
+        $self->render(json => {error => 'Unable to get state from memory'}, status => 500) and return;
     }
 
     if ($status->{playing}) {
@@ -265,13 +283,13 @@ sub start {
     # This check doesn't need to be here
     # Maybe go back to hijacking the player, regardless of state, when a track is queued?
     if ($self->tx->remote_address ne '127.0.0.1') {
-        $self->render(json => {error => 'Permission denied'}, code => 401) and return;
+        $self->render(json => {error => 'Permission denied'}, status => 401) and return;
     }
 
     my $status;
     eval { $status = decode_json $self->app->redis->get('spot:cache:state') };
     if ($@) {
-        $self->render(json => {error => 'Unable to get state from memory'}, code => 500) and return;
+        $self->render(json => {error => 'Unable to get state from memory'}, status => 500) and return;
     }
 
     $self->app->redis->set('spot:config:playing', 1);
