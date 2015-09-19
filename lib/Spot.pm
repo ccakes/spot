@@ -22,11 +22,11 @@ has redis => sub {
 
 has db => sub {
     my $self = shift;
-    
+
     return unless $self->app->config->{persistent_dsn};
-    
+
     my $db = DBI->connect($self->app->config->{persistent_dsn});
-    
+
     my $create = "
         CREATE TABLE IF NOT EXISTS track_history (
             track primary key,
@@ -34,9 +34,9 @@ has db => sub {
             user text
         )
     ";
-    
+
     $db->do($create) or die "Error initialising database: " . $db->errstr;
-    
+
     return $db;
 };
 
@@ -180,7 +180,8 @@ sub _play_next {
     my $self = shift;
 
     if (!$self->app->redis->get('spot:config:playing')) {
-        return;
+        $self->app->redis->set('spot:config:playing', 1);
+        #return;
     }
 
     # Fetch track play it and incr counters
@@ -209,13 +210,22 @@ sub _play_next {
     $self->app->redis->set('spot:cache:state', encode_json $new_state);
 
     # Send an event to clients to update playlists
-    $self->app->redis->publish('spot.events', 'update_playlist');
-    $self->app->redis->publish('spot.events', 'update_track');
-    
+    $self->app->redis->publish('spot.events', encode_json {
+        type => 'update',
+        item => 'playlist'
+    });
+    $self->app->redis->publish('spot.events', encode_json {
+        type => 'update',
+        item => 'track'
+    });
+
     # If this is the last song, grab a random track from the history and queue it
     # Ultimately this may come from spot:cache:zplayed so selections can be based
     # off popularity but for now, spot:cache:tracks will do
-    if ($self->app->redis->zcount('spot:playlist:main', '-inf', '+inf') < 1) {
+
+    my $online = $self->app->redis->hvals('spot:cache:online');
+
+    if ($self->app->redis->zcount('spot:playlist:main', '-inf', '+inf') < 1 && @{$online} > 0) {
         my $tracks = $self->app->redis->hkeys('spot:cache:tracks');
         my $track = $tracks->[rand scalar(@{$tracks})];
         $self->_queue_track($track);
@@ -267,19 +277,22 @@ sub _queue_track {
         say "[ERR] Error querying Redis for track $uri" and return;
     }
 
+    my $playlist_length = $self->app->redis->zcount('spot:playlist:main', '-inf', '+inf');
+
     $self->app->log->info( sprintf('Queuing track: %s - %s', $track->{artist}, $track->{track}) );
 
     # Grab the next score then add the track
     # Try this out as an alternative to keying the records
     my $score = $self->app->redis->incr('spot:config:score');
     $self->app->redis->zadd('spot:playlist:main', $score, $uri);
-    
+
     # Map track to user if we have the data
     if (ref $user) {
         $self->app->redis->hset('spot:playlist:user_map', $uri, $user->{id});
-        
+
         # If we have a persistent datastore configured, add a record for the track
         if (defined $self->app->config->{persistent_dsn}) {
+            # TODO: track field is unique in schema
             my $insert = "INSERT INTO track_history (track, date, user) VALUES (?, ?, ?)";
             my $stmt = $self->app->db->prepare($insert);
             $stmt->execute($uri, localtime->datetime, $user->{id}) or
@@ -288,7 +301,13 @@ sub _queue_track {
     }
 
     # Send an event to clients to update playlists
-    $self->app->redis->publish('spot.events', 'update_playlist');
+    $self->app->redis->publish('spot.events', encode_json {
+        type => 'update',
+        item => 'playlist'
+    });
+
+    # Start playing if current playlist is empty
+    $self->_play_next if ($playlist_length < 1 and !$self->app->redis->get('spot:config:playing'));
 
     return 1;
 }

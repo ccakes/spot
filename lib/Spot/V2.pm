@@ -148,6 +148,8 @@ sub sock {
     my $self = shift;
 
     $self->inactivity_timeout(300);
+    my $account = $self->session('spot_user');
+    my $online = 0;
 
     #if (exists $self->app->config->{auth} && $self->session('account_info')) {
     if (0) {
@@ -168,11 +170,12 @@ sub sock {
     my $cb = $sub->on(message => sub {
         my ($redis, $data, $topic) = @_;
 
-        if ($data eq 'update_playlist') {
-            $self->send({json => {type => 'update', item => 'playlist'}});
-        }
-        elsif ($data eq 'update_track') {
-            $self->send({json => {type => 'update', item => 'track'}});
+        my $msg;
+        eval { $msg = decode_json $data };
+        return if $@;
+
+        if ($msg->{type} eq 'update') {
+            $self->send({json => $msg});
         }
     });
 
@@ -184,20 +187,43 @@ sub sock {
         eval { $msg = decode_json $data };
         return if $@;
 
+        if ($account) {
+            # Only do this once...
+            if (!$online) {
+                $c->app->redis->hset('spot:cache:online', $account->{id}, 1);
+                $c->app->redis->publish('spot.events', encode_json {
+                    type => 'update',
+                    item => 'users',
+                    message => sprintf('%s joined', $account->{display_name})
+                });
+            }
+
+            $online = 1;
+        }
+
         $c->send({json => {type => 'pong'}}) if $msg->{type} eq 'ping';
     });
 
     $self->on(finish => sub {
-        my $self = shift;
+        my $c = shift;
 
-        $self->app->redis->unsubscribe(message => $cb);
+        if ($account) {
+            $c->app->redis->hdel('spot:cache:online', $account->{id});
+            $c->app->redis->publish('spot.users', encode_json {
+                type => 'update',
+                item => 'users',
+                message => sprintf('%s left', $account->{display_name})
+            });
+        }
+
+        $c->app->redis->unsubscribe(message => $cb);
     });
 }
 
 sub append {
     my $self = shift;
     my $uri = $self->param('uri');
-    
+
     my $account_info = $self->session('spot_user');
     if (exists $self->app->config->{auth}->{enforced} && $self->app->config->{auth}->{enforced}) {
         if (!$account_info) {
@@ -222,7 +248,7 @@ sub append {
 sub vote {
     my $self = shift;
     my $uri = $self->param('uri');
-    
+
     my $account_info = $self->session('spot_user');
     if (exists $self->app->config->{auth}->{enforced} && $self->app->config->{auth}->{enforced}) {
         if (!$account_info) {
@@ -242,7 +268,10 @@ sub vote {
     $self->app->log->info("Voted track $uri");
 
     # Send an event to clients to update playlists
-    $self->app->redis->publish('spot.events', 'update_playlist');
+    $self->app->redis->publish('spot.events', encode_json {
+        type => 'update',
+        item => 'playlist'
+    });
 
     $self->render(json => {track => $score});
 }
@@ -274,27 +303,6 @@ sub playpause {
 
         $self->render(json => {'spot:config:playing' => 1});
     }
-}
-
-sub start {
-    my $self = shift;
-
-    # TODO
-    # This check doesn't need to be here
-    # Maybe go back to hijacking the player, regardless of state, when a track is queued?
-    if ($self->tx->remote_address ne '127.0.0.1') {
-        $self->render(json => {error => 'Permission denied'}, status => 401) and return;
-    }
-
-    my $status;
-    eval { $status = decode_json $self->app->redis->get('spot:cache:state') };
-    if ($@) {
-        $self->render(json => {error => 'Unable to get state from memory'}, status => 500) and return;
-    }
-
-    $self->app->redis->set('spot:config:playing', 1);
-    my $next_track = $self->app->_play_next;
-    $self->render(json => {current_track => $next_track});
 }
 
 1;
